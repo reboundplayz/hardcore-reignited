@@ -1,0 +1,470 @@
+local Spawner = loadstring(game:HttpGet("https://raw.githubusercontent.com/RegularVynixu/DOORS-Entity-Spawner-V2/main/init.luau"))()
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local localPlayer = Players.LocalPlayer
+
+local entity = Spawner:Create({
+    Entity = {
+        Name = "Ripper",
+        Asset = "https://github.com/reboundplayz/hardcore-reignited/raw/refs/heads/main/ripperfixreignited.rbxm",
+        HeightOffset = 0
+    },
+    Lights = {
+        Flicker = {
+            Enabled = false,
+            Duration = 1
+        },
+        Shatter = false,
+        Repair = false
+    },
+    Earthquake = {
+        Enabled = false
+    },
+    CameraShake = {
+        Enabled = true,
+        Range = 150,
+        Values = {12, 110, 0.1, 0.25}
+    },
+    Movement = {
+        Speed = 220,
+        Delay = 7,
+        Reversed = false
+    },
+    Rebounding = {
+        Enabled = false,
+        Type = "Ambush",
+        Min = 1,
+        Max = 1,
+        Delay = 2
+    },
+    Damage = {
+        Enabled = true,
+        IgnoreHiding = false,
+        Range = 60,
+        Amount = 0 
+    },
+    Crucifixion = {
+        Enabled = true,
+        Range = 40,
+        Resist = false,
+        Break = true
+    },
+    Death = {
+        Type = "Guiding",
+        Hints = {"Death", "Hints", "Go", "Here"},
+        Cause = "Ripper"
+    }
+})
+
+---====== Pre-download and Sync Assets ======---
+
+local jumpFaceFile = "ripper_jumpscare_face.png"
+if not isfile(jumpFaceFile) then
+    pcall(function()
+        writefile(jumpFaceFile, game:HttpGet("https://github.com/reboundplayz/Doors-Fixed-Modes/blob/main/download%20(9).png?raw=true"))
+    end)
+end
+
+local jumpSoundFile = "ripper_static_kill.mp3"
+if not isfile(jumpSoundFile) then
+    pcall(function()
+        writefile(jumpSoundFile, game:HttpGet("https://github.com/reboundplayz/Doors-Fixed-Modes/raw/refs/heads/main/Kill_with_static.mp3.mpeg"))
+    end)
+end
+
+entity:SetCallback("OnSpawned", function()
+    local latestRoomNum = game.ReplicatedStorage.GameData.LatestRoom.Value
+    local currentRoom = workspace.CurrentRooms:FindFirstChild(tostring(latestRoomNum))
+    
+    if currentRoom then
+        local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+        for _, v in pairs(currentRoom:GetDescendants()) do
+            if v:IsA("Light") then
+                TweenService:Create(v, tweenInfo, {Color = Color3.fromRGB(255, 0, 0)}):Play()
+            end
+        end
+    end
+end)
+
+local destroyedRooms = {}
+local hasTriggeredDoorSlam = false
+local isKilling = false
+
+entity:SetCallback("OnEnterRoom", function(room, firstTime)
+    local latestRoomNum = tostring(game.ReplicatedStorage.GameData.LatestRoom.Value)
+    
+    if room.Name == latestRoomNum and not hasTriggeredDoorSlam then
+        local doorModel = room:FindFirstChild("Door")
+        if doorModel then
+            local doorPanel = doorModel:FindFirstChild("Door")
+            if doorPanel and doorPanel:IsA("BasePart") then
+                hasTriggeredDoorSlam = true
+                
+                task.spawn(function()
+                    local entityModel = workspace:FindFirstChild("Ripper")
+                    local entityRoot = entityModel and (entityModel:FindFirstChild("HumanoidRootPart") or entityModel:FindFirstChildWhichIsA("BasePart"))
+                    
+                    if entityRoot then
+                        while entityModel and entityModel.Parent and (entityRoot.Position - doorPanel.Position).Magnitude > 14 do
+                            task.wait()
+                        end
+                    else
+                        task.wait(0.3)
+                    end
+                    
+                    pcall(function()
+                        doorModel.ClientOpen:FireServer()
+                    end)
+                    
+                    -- INTEGRATED REPLICATEDSTORAGE CAMERA SHAKER MODULE
+                    task.spawn(function()
+                        local cameraShaker = require(game.ReplicatedStorage.CameraShaker)
+                        local camera = workspace.CurrentCamera
+
+                        local camShake = cameraShaker.new(Enum.RenderPriority.Camera.Value, function(cf)
+                            camera.CFrame = camera.CFrame * cf
+                        end)
+                        camShake:Start()
+                        camShake:ShakeOnce(5, 45, 0.1, 2.5, 2, 20)
+                    end)
+                    
+                    -- Play all despawn sounds simultaneously
+                    if entityModel then
+                        local rushNew = entityModel:FindFirstChild("RushNew")
+                        if rushNew then
+                            for _, soundName in ipairs({"Despawn1", "Despawn2", "Despawn3"}) do
+                                local despawnSound = rushNew:FindFirstChild(soundName)
+                                if despawnSound and despawnSound:IsA("Sound") then
+                                    despawnSound:Play()
+                                end
+                            end
+                        end
+                    end
+                    
+                    -- Hard freeze him at his current position using Heartbeat to override spawner logic
+                    local freezeConnection
+                    if entityModel and entityRoot then
+                        local doorFreezePos = entityRoot.CFrame
+                        freezeConnection = RunService.Heartbeat:Connect(function()
+                            if entityModel and entityModel.Parent and entityRoot then
+                                entityRoot.Anchored = true
+                                entityRoot.CFrame = doorFreezePos
+                                entityRoot.AssemblyLinearVelocity = Vector3.zero
+                                entityRoot.AssemblyAngularVelocity = Vector3.zero
+                            end
+                        end)
+                    end
+                    
+                    -- Fake out wait time at the door
+                    task.wait(2)
+                    
+                    -- Disconnect the door freeze loop
+                    if freezeConnection then freezeConnection:Disconnect() end
+                    
+                    -- CHECK: If a jumpscare has started, do NOT fall into the void. Stay at the top!
+                    if entityModel and not isKilling then
+                        if entityRoot then entityRoot.Anchored = false end
+                        entityModel:PivotTo(CFrame.new(0, -50000, 0))
+                        
+                        -- Wait 15 seconds for long particle trails to fully fade out before destroying
+                        task.delay(15, function()
+                            if entityModel and not isKilling and entityModel.Parent then 
+                                entityModel:Destroy() 
+                            end
+                        end)
+                    end
+                end)
+            end
+        end
+    end
+
+    if room and not destroyedRooms[room] then
+        destroyedRooms[room] = true
+        
+        task.spawn(function()
+            task.wait(0.05)
+            
+            local breakSound = Instance.new("Sound")
+            breakSound.SoundId = "rbxassetid://9114223171"
+            breakSound.Volume = 2.5
+            breakSound.Parent = room:FindFirstChild("Assets") or room
+            breakSound:Play()
+            breakSound.Ended:Connect(function() breakSound:Destroy() end)
+
+            local assetContainer = room:FindFirstChild("Assets") or room
+            
+            local breakSounds = {
+                "rbxassetid://9125992545",
+                "rbxassetid://4004052860",
+                "rbxassetid://7142857558",
+                "rbxassetid://7142843615",
+                "rbxassetid://7142857558",
+                "rbxassetid://2612674531",
+                "rbxassetid://2174790942"
+            }
+
+            local blacklist = {"wardrobe", "bed", "rug", "key", "drawer", "book", "breaker", "table", "desk", "gold", "dresser"}
+
+for _, item in pairs(assetContainer:GetChildren()) do
+                if item:IsA("Model") and item.Name ~= "Door" and item.Name ~= "HidingSpots" then
+                    
+                    local isBlacklisted = false
+                    local itemNameLower = string.lower(item.Name)
+                    for _, word in ipairs(blacklist) do
+                        if string.find(itemNameLower, word) then
+                            isBlacklisted = true
+                            break
+                        end
+                    end
+
+                    if not isBlacklisted then
+                        local primary = item.PrimaryPart or item:FindFirstChildWhichIsA("BasePart")
+
+                        if primary then
+                            -- Thread out the model destruction to let parts stagger their sound playbacks
+                            task.spawn(function()
+                                for _, v in ipairs(item:GetDescendants()) do
+                                    if v:IsA("BasePart") then
+                                        local lowerName = string.lower(v.Name)
+
+                                        if not string.find(lowerName, "floor") and not string.find(lowerName, "hitbox") then
+                                            
+                                            -- STAGGER DELAY: Breaks up the 'one sound' audio compression
+                                            task.wait(math.random(1, 4) / 100)
+
+                                            local randomSoundId = breakSounds[math.random(1, #breakSounds)]
+
+                                            local s = Instance.new("Sound")
+                                            s.SoundId = randomSoundId
+                                            s.Volume = math.random(12, 24) / 10 
+                                            s.PlaybackSpeed = math.random(85, 115) / 100
+                                            s.RollOffMaxDistance = 100
+                                            s.Parent = v
+                                            s:Play()
+
+                                            s.Ended:Connect(function()
+                                                s:Destroy()
+                                            end)
+
+                                            v.Anchored = false
+                                            v.CanCollide = true 
+
+                                            v.CustomPhysicalProperties = PhysicalProperties.new(0.01, 0.01, 0.5, 1, 1)
+
+                                            pcall(function()
+                                                if v:CanSetNetworkOwnership() then
+                                                    v:SetNetworkOwner(localPlayer)
+                                                end
+                                            end)
+
+                                            v.CFrame = v.CFrame + Vector3.new(0, 0.05, 0)
+                                        end
+                                    end
+                                end
+                            end)
+
+                            primary.Anchored = true
+                            task.wait()
+                            primary.Anchored = false
+
+                            primary.AssemblyLinearVelocity = Vector3.new(
+                                math.random(-60, 60),
+                                math.random(20, 50),
+                                math.random(-60, 60)
+                            )
+
+                            primary.AssemblyAngularVelocity = Vector3.new(
+                                math.random(-25, 25),
+                                math.random(-25, 25),
+                                math.random(-25, 25)
+                            )
+                        end
+                    end
+                end
+            end
+
+        end)
+    end
+end)
+
+---====== Custom Manual Proximity Kill Jumpscare System ======---
+entity:SetCallback("OnDamagePlayer", function(newHealth)
+    local entityModel = workspace:FindFirstChild("Ripper")
+    local character = localPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local camera = workspace.CurrentCamera
+    
+    if character and humanoid and humanoid.Health > 0 and not isKilling then
+        isKilling = true -- Lock state immediately so door thread can't touch him
+        
+        -- OVERRIDE SAFETY: Change his parent to workspace directly to protect from backend destruction,
+        -- but KEEP his original name "Ripper" so that upcoming search passes target it smoothly.
+        if entityModel then
+            entityModel.Parent = workspace
+        end
+        
+        local playerRoot = character:FindFirstChild("HumanoidRootPart")
+        if playerRoot then playerRoot.Anchored = true end
+        
+        -- 1. STICKY ANCHOR / FREEZE RIPPER IN PLACE VIA HEARTBEAT HOOK (Keeps him at the top)
+        local freezePos = entityModel and entityModel:GetPivot()
+        local freezeConnection
+        if entityModel and freezePos then
+            freezeConnection = RunService.Heartbeat:Connect(function()
+                if entityModel and entityModel.Parent then
+                    for _, part in ipairs(entityModel:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            part.Anchored = true
+                        end
+                    end
+                    entityModel:PivotTo(freezePos)
+                end
+            end)
+        end
+        
+        -- 2. DYNAMICALLY SWAP AND FREEZE TARGETED EMITTERS + STOP ALL SOUNDS INSIDE RIPPER
+        local customFaceAsset = isfile(jumpFaceFile) and getcustomasset(jumpFaceFile) or ""
+        if entityModel then
+            for _, desc in pairs(entityModel:GetDescendants()) do
+                if desc:IsA("Sound") then
+                    desc:Stop()
+                end
+            end
+            
+            local rushNew = entityModel:FindFirstChild("RushNew")
+            local ripe = rushNew and rushNew:FindFirstChild("ripe")
+            local mainEmitter = ripe and ripe:FindFirstChild("ParticleEmitter")
+            
+            if mainEmitter and mainEmitter:IsA("ParticleEmitter") then
+                mainEmitter:Clear()
+                if customFaceAsset ~= "" then
+                    mainEmitter.Texture = customFaceAsset
+                end
+                mainEmitter.Speed = NumberRange.new(0)
+                mainEmitter.Squash = NumberSequence.new(0)
+                mainEmitter.Rate = 1 
+            else
+                for _, decal in ipairs(entityModel:GetDescendants()) do
+                    if decal:IsA("Decal") and customFaceAsset ~= "" then
+                        decal.Texture = customFaceAsset
+                        decal.Transparency = 0
+                    end
+                end
+            end
+            
+            for _, desc in pairs(entityModel:GetDescendants()) do
+                if desc:IsA("ParticleEmitter") and desc ~= mainEmitter then
+                    desc.Speed = NumberRange.new(0)
+                    desc.Rate = 0
+                end
+            end
+        end
+        
+        -- 3. FORCED LOOK-AT SCRIPTABLE CAMERA TRACKING
+        local camConnection
+        if camera and entityModel then
+            camera.CameraType = Enum.CameraType.Scriptable
+            camConnection = RunService.RenderStepped:Connect(function()
+                if entityModel and entityModel.Parent then
+                    local p = entityModel:FindFirstChild("HumanoidRootPart") or entityModel:FindFirstChildWhichIsA("BasePart")
+                    if p then
+                        camera.CFrame = CFrame.new(camera.CFrame.Position, p.Position)
+                    end
+                end
+            end)
+        end
+        
+        -- 4. PLAY THE AUDIO SPECIFIED VIA GITHUB SOURCE
+        if isfile(jumpSoundFile) then
+            local jumpSound = Instance.new("Sound")
+            jumpSound.SoundId = getcustomasset(jumpSoundFile)
+            jumpSound.Volume = 8
+            jumpSound.Parent = game:GetService("CoreGui") or localPlayer:WaitForChild("PlayerGui")
+            jumpSound:Play()
+            task.delay(6, function() jumpSound:Destroy() end)
+        end
+        
+        -- 5. INITIALIZE STATIC SCREEN
+        local screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "RipperJumpscareGui"
+        screenGui.IgnoreGuiInset = true
+        screenGui.Parent = game:GetService("CoreGui") or localPlayer:WaitForChild("PlayerGui")
+        
+        local staticImage = Instance.new("ImageLabel")
+        staticImage.Size = UDim2.new(1.2, 0, 1.2, 0)
+        staticImage.Position = UDim2.new(-0.1, 0, -0.1, 0)
+        staticImage.BackgroundTransparency = 1
+        staticImage.Image = "rbxassetid://11306695974"
+        staticImage.ImageTransparency = 1 
+        staticImage.Parent = screenGui
+        
+        local invertConnection
+        local tickCount = 0
+        invertConnection = RunService.RenderStepped:Connect(function()
+            tickCount = tickCount + 1
+            
+            if tickCount % 2 == 0 then
+                staticImage.ImageColor3 = Color3.fromRGB(255, 255, 255)
+            else
+                staticImage.ImageColor3 = Color3.fromRGB(0, 0, 0)
+            end
+
+            local randomXOffset = math.random(-30, 30) / 500
+            staticImage.Position = UDim2.new(-0.1 + randomXOffset, 0, -0.1, 0)
+        end)
+        
+        task.spawn(function()
+            task.wait(1.75) 
+            staticImage.ImageTransparency = 0 
+        end)
+        
+        -- 6. HARD 4-SECOND LIFE DELAY TIMEOUT BEFORE FINAL BLOW
+        task.spawn(function()
+            task.wait(4.0)
+            
+            if freezeConnection then freezeConnection:Disconnect() end
+            if camConnection then camConnection:Disconnect() end
+            if playerRoot then playerRoot.Anchored = false end
+            
+            camera.CameraType = Enum.CameraType.Custom
+            
+            if invertConnection then invertConnection:Disconnect() end
+            screenGui:Destroy()
+            
+            pcall(function()
+                game:GetService("ReplicatedStorage").GameStats["Player_".. localPlayer.Name].Total.DeathCause.Value = "Ripper"
+            end)
+            
+            if humanoid then
+                humanoid.Health = 0
+                character:BreakJoints()
+            end
+            
+            -- Drop to void here after jumpscare concludes and wait 15 seconds for trails
+            if entityModel then 
+                for _, part in ipairs(entityModel:GetDescendants()) do
+                    if part:IsA("BasePart") then part.Anchored = false end
+                end
+                entityModel:PivotTo(CFrame.new(0, -50000, 0)) 
+                
+                task.delay(15, function()
+                    if entityModel then entityModel:Destroy() end
+                end)
+            end
+            
+            isKilling = false
+        end)
+    end
+end)
+
+entity:SetCallback("OnStartMoving", function() end)
+entity:SetCallback("OnLookAt", function(lineOfSight) end)
+entity:SetCallback("OnRebounding", function(startOfRebound) end)
+entity:SetCallback("OnDespawning", function() end)
+entity:SetCallback("OnDespawned", function()
+    table.clear(destroyedRooms)
+    hasTriggeredDoorSlam = false
+end)
+
+entity:Run(true)
