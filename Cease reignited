@@ -1,0 +1,271 @@
+---====== Load spawner ======---
+
+local Spawner = loadstring(game:HttpGet("https://raw.githubusercontent.com/RegularVynixu/DOORS-Entity-Spawner-V2/main/init.luau"))()
+
+local originalSpeed = 30
+
+---====== Create entity ======---
+
+local entity = Spawner:Create({
+    Entity = {
+        Name = "Cease",
+        Asset = "https://github.com/reboundplayz/hardcore-reignited/raw/refs/heads/main/ceasereignited.rbxm",
+        HeightOffset = 0
+    },
+    Lights = {
+        Flicker = {
+            Enabled = false,
+            Duration = 1
+        },
+        Shatter = false,
+        Repair = false
+    },
+    Earthquake = {
+        Enabled = false
+    },
+    CameraShake = {
+        Enabled = true,
+        Range = 150,
+        Values = {1.5, 40, 0.1, 0.1}
+    },
+    Movement = {
+        Speed = originalSpeed,
+        Delay = 0,
+        Reversed = false
+    },
+    Rebounding = {
+        Enabled = false,
+        Type = "Ambush",
+        Min = 1,
+        Max = 1,
+        Delay = 2
+    },
+    Damage = {
+        Enabled = false, 
+        Range = 40,
+        Amount = 125
+    },
+    Crucible = {
+        Enabled = true,
+        Range = 40,
+        Resist = false,
+        Break = true
+    },
+    Death = {
+        Type = "Guiding",
+        Hints = {"You just died to Cease...", "It sees through movement and can see anyone through a wardrobe.", "Maybe don't hide?", "I hope to see you here again."},
+        Cause = "Cease"
+    }
+})
+
+---====== Custom Logic Variables ======---
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
+
+local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local Humanoid = Character:WaitForChild("Humanoid")
+local RootPart = Character:WaitForChild("HumanoidRootPart")
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    Character = char
+    Humanoid = char:WaitForChild("Humanoid")
+    RootPart = char:WaitForChild("HumanoidRootPart")
+end)
+
+local movementConnection = nil
+local lavenderColor = Color3.new(0.454902, 0.529412, 1)
+local tweenInfo = TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+-- CONFIGURABLE FIELD
+local MAX_DETECTION_DISTANCE = 150 
+
+-- State variables
+local isTrackingMovement = false
+local movementStartTime = 0
+local isCeaseFrozen = false
+local freezePosition = nil
+
+local function changeLightColors()
+    local currentRoom = workspace:FindFirstChild("CurrentRooms")
+    if currentRoom then
+        for _, room in ipairs(currentRoom:GetChildren()) do
+            for _, desc in ipairs(room:GetDescendants()) do
+                if desc:IsA("Light") then
+                    TweenService:Create(desc, tweenInfo, {Color = lavenderColor}):Play()
+                elseif desc:IsA("BasePart") and (desc.Name == "Light" or desc.Name == "Neon" or desc.Name == "Bulb") then
+                    TweenService:Create(desc, tweenInfo, {Color = lavenderColor}):Play()
+                end
+            end
+        end
+    end
+end
+
+local function isPlayerMoving()
+    if not Humanoid then return false end
+    return Humanoid.MoveDirection.Magnitude > 0.01
+end
+
+local function disableEntityCollision(model)
+    for _, desc in ipairs(model:GetDescendants()) do
+        if desc:IsA("BasePart") then
+            desc.CanCollide = false
+            desc.CanTouch = false
+            desc.CanQuery = false
+        end
+    end
+end
+
+local function setEntitySpeed(targetSpeed)
+    if entity.Config and entity.Config.Movement then
+        entity.Config.Movement.Speed = targetSpeed
+    elseif entity.Movement then
+        entity.Movement.Speed = targetSpeed
+    end
+end
+
+---====== Callback Setup ======---
+
+entity:SetCallback("OnSpawned", function()
+    print("Entity has spawned")
+    changeLightColors()
+    
+    task.spawn(function()
+        local entityModel = workspace:WaitForChild("Cease", 5)
+        if entityModel then
+            disableEntityCollision(entityModel)
+        end
+    end)
+end)
+
+entity:SetCallback("OnStartMoving", function()
+    print("Entity has started moving")
+    
+    local entityModel = workspace:FindFirstChild("Cease")
+    if not entityModel then return end
+    
+    disableEntityCollision(entityModel)
+    
+    isTrackingMovement = false
+    isCeaseFrozen = false
+    freezePosition = nil
+    
+    movementConnection = RunService.Heartbeat:Connect(function()
+        if not entityModel or not entityModel.Parent or not entityModel:IsDescendantOf(workspace) then
+            if movementConnection then movementConnection:Disconnect() end
+            return
+        end
+        
+        local targetPart = Character:FindFirstChild("HumanoidRootPart")
+        local originPart = entityModel.PrimaryPart or entityModel:FindFirstChildWhichIsA("BasePart")
+        
+        if originPart and targetPart and Humanoid.Health > 0 then
+            
+            -- HARD OVERRIDE SNAP: If frozen, visually lock him without altering physics/anchoring state
+            if isCeaseFrozen and freezePosition then
+                entityModel:PivotTo(freezePosition)
+                return 
+            end
+            
+            local currentPosition = originPart.Position
+            local toPlayerVector = (targetPart.Position - currentPosition)
+            local distance = toPlayerVector.Magnitude
+            
+            if distance <= MAX_DETECTION_DISTANCE then
+                local legacyRay = Ray.new(currentPosition, toPlayerVector)
+                local ignoreList = {entityModel, Character}
+                local hitPart = workspace:FindPartOnRayWithIgnoreList(legacyRay, ignoreList)
+                
+                if not hitPart or Character:GetAttribute("Hiding") then
+                    local currentlyMoving = isPlayerMoving()
+                    
+                    if currentlyMoving then
+                        if not isTrackingMovement then
+                            isTrackingMovement = true
+                            movementStartTime = os.clock()
+                        else
+                            local elapsed = os.clock() - movementStartTime
+                            if elapsed >= 0.5 then
+                                -- MOVED OVER 0.5 SECONDS: Instantly Kill
+                                isTrackingMovement = false
+                                if movementConnection then movementConnection:Disconnect() end
+                                
+                                local scareSound = Instance.new("Sound")
+                                scareSound.SoundId = "rbxassetid://5263560896"
+                                scareSound.Volume = 5
+                                scareSound.PlaybackSpeed = 2
+                                scareSound.Parent = SoundService
+                                scareSound:Play()
+                                game:GetService("Debris"):AddItem(scareSound, 5)
+                                
+                                pcall(function()
+                                    local playerStats = ReplicatedStorage:FindFirstChild("GameStats")
+                                    if playerStats then
+                                        local targetedFolder = playerStats:FindFirstChild("Player_" .. LocalPlayer.Name)
+                                        if targetedFolder and targetedFolder:FindFirstChild("Total") and targetedFolder.Total:FindFirstChild("DeathCause") then
+                                            targetedFolder.Total.DeathCause.Value = "Cease"
+                                        end
+                                    end
+                                end)
+                                
+                                Humanoid.Health = 0
+                                task.defer(function()
+                                    entity:Attack()
+                                end)
+                            end
+                        end
+                    else
+                        -- Player is completely still
+                        if isTrackingMovement then
+                            local elapsed = os.clock() - movementStartTime
+                            isTrackingMovement = false
+                            
+                            if elapsed < 0.5 and not isCeaseFrozen then
+                                -- MOVED LESS THAN 0.5 SECONDS: CFrame Caching Lock
+                                isCeaseFrozen = true
+                                freezePosition = entityModel:GetPivot() 
+                                setEntitySpeed(0)
+                                
+                                -- Play "Repent" audio file referenced in image_6e4c8f.png
+                                local repentSound = entityModel:FindFirstChild("Repent", true)
+                                if repentSound and repentSound:IsA("Sound") then
+                                    repentSound:Play()
+                                end
+                                
+                                task.delay(3, function()
+                                    if entityModel and entityModel.Parent then
+                                        disableEntityCollision(entityModel)
+                                        setEntitySpeed(originalSpeed)
+                                    end
+                                    -- Clearing these drops out of the hard snap logic seamlessly
+                                    freezePosition = nil
+                                    isCeaseFrozen = false
+                                end)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end)
+
+entity:SetCallback("OnEnterRoom", function(room: Model, firstTime: boolean)
+    changeLightColors()
+end)
+
+entity:SetCallback("OnDespawning", function()
+    if movementConnection then movementConnection:Disconnect() end
+end)
+
+entity:SetCallback("OnDespawned", function()
+    if movementConnection then movementConnection:Disconnect() end
+end)
+
+---====== Run entity ======---
+
+entity:Run(true)
