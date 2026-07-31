@@ -1,0 +1,534 @@
+-- 🛠️ Bộ tương thích Request & Asset cho các Executor khác nhau
+local http_request = (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
+local getasset = getcustomasset or getsynasset
+
+local threadA = nil
+
+if not (writefile and getasset and http_request) then
+    warn("[Frostbite]: Executor của bạn không hỗ trợ writefile/getcustomasset/request!")
+    return
+end
+
+-- ⏳ Chờ phòng thay đổi
+local gameData = game:GetService("ReplicatedStorage"):WaitForChild("GameData")
+local latestRoom = gameData:WaitForChild("LatestRoom")
+
+latestRoom.Changed:Wait()
+local tweenservice = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+
+local frost = Instance.new("ColorCorrectionEffect")
+frost.Parent = game.Lighting
+frost.Name = "frost4"
+tweenservice:Create(frost, TweenInfo.new(10), {
+    TintColor = Color3.fromRGB(0, 0, 255),
+    Saturation = -0.7,
+    Contrast = 0.2
+}):Play()
+
+-- 🔊 Hàm tải âm thanh an toàn
+local function GetGitSound(GithubSnd, SoundName)
+    local fileName = SoundName .. ".mp3"
+    if not isfile(fileName) then
+        local success, response = pcall(function()
+            return game:HttpGet(GithubSnd)
+        end)
+        if success and response then
+            writefile(fileName, response)
+        else
+            warn("[Frostbite]: Không thể tải âm thanh!")
+            return nil
+        end
+    end
+
+    local sound = Instance.new("Sound")
+    sound.SoundId = getasset(fileName)
+    return sound
+end
+
+-- 📦 Hàm tải Model từ GitHub
+local function GetGithubModel(url)
+    local fileName = string.match(url, "([^/]+)$") or "temp_model.rbxm"
+
+    if not isfile(fileName) then
+        local response = http_request({Url = url, Method = "GET"})
+        if response and response.StatusCode == 200 then
+            writefile(fileName, response.Body)
+        else
+            warn("[Frostbite]: Không thể tải Model từ GitHub!")
+            return nil
+        end
+    end
+
+    local assetId = getasset(fileName)
+    local success, result = pcall(function() 
+        return game:GetObjects(assetId)[1] 
+    end)
+
+    return success and result or nil
+end
+
+-- 🎵 Bật nhạc nền Jumpscare
+local Jumpscare = GetGitSound("https://github.com/eoyoustme/Hardcore/blob/main/Frostbite.mp3?raw=true", "Frostyman")
+if Jumpscare then
+    Jumpscare.Parent = workspace
+    Jumpscare.Volume = 5
+    Jumpscare.PlaybackSpeed = 1
+    Jumpscare.Looped = true
+    Jumpscare.Name = "Frostyman67"
+    Jumpscare:Play()
+end
+
+local function GetRoom()
+    local rooms = workspace:FindFirstChild("CurrentRooms")
+    if rooms and latestRoom.Value then
+        return rooms:FindFirstChild(tostring(latestRoom.Value))
+    end
+    return nil
+end
+
+-- 📥 Tải Model 1 lần duy nhất ở ngoài vòng lặp
+local modelTemplate = GetGithubModel("https://github.com/reboundplayz/hardcore-reignited/raw/refs/heads/main/frostbitereignitedrecreate.rbxm")
+if not modelTemplate then
+    warn("[Frostbite]: Không thể khởi tạo Model, đã dừng script.")
+    return
+end
+
+--------------------------------------------------------------------------------
+-- 🎨 COLD BAR UI
+--------------------------------------------------------------------------------
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local function CreateColdBarUI()
+    local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+    
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "FrostbiteColdBarGui"
+    gui.ResetOnSpawn = false
+    gui.DisplayOrder = 100000
+
+    local container = Instance.new("CanvasGroup")
+    container.Name = "BarContainer"
+    container.Size = UDim2.new(0, 320, 0, 8) -- Ultra Thin height (8px), wide bar
+    container.Position = UDim2.new(1, -340, 1, -40) -- Bottom Right
+    container.BackgroundTransparency = 1
+    container.Parent = gui
+
+    -- Outer Blue Frame
+    local barFrame = Instance.new("Frame")
+    barFrame.Name = "BarFrame"
+    barFrame.Size = UDim2.new(1, 0, 1, 0)
+    barFrame.BackgroundColor3 = Color3.fromRGB(20, 25, 35)
+    barFrame.BorderSizePixel = 0
+    barFrame.Parent = container
+
+    local uiCorner = Instance.new("UICorner")
+    uiCorner.CornerRadius = UDim.new(0, 3)
+    uiCorner.Parent = barFrame
+
+    local uiStroke = Instance.new("UIStroke")
+    uiStroke.Color = Color3.fromRGB(150, 215, 245)
+    uiStroke.Thickness = 2
+    uiStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    uiStroke.Parent = barFrame
+
+    -- Inner Background Gradient
+    local innerBg = Instance.new("Frame")
+    innerBg.Name = "InnerBg"
+    innerBg.Size = UDim2.new(1, -2, 1, -2)
+    innerBg.Position = UDim2.new(0, 1, 0, 1)
+    innerBg.BackgroundColor3 = Color3.fromRGB(50, 20, 30)
+    innerBg.BorderSizePixel = 0
+    innerBg.Parent = barFrame
+
+    local innerCorner = Instance.new("UICorner")
+    innerCorner.CornerRadius = UDim.new(0, 2)
+    innerCorner.Parent = innerBg
+
+    local bgGradient = Instance.new("UIGradient")
+    bgGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(30, 40, 50)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(100, 30, 40)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(220, 90, 50))
+    })
+    bgGradient.Parent = innerBg
+
+    -- Light Blue Fill Bar
+    local fillBar = Instance.new("Frame")
+    fillBar.Name = "FillBar"
+    fillBar.Size = UDim2.new(1, 0, 1, 0)
+    fillBar.Position = UDim2.new(0, 0, 0, 0)
+    fillBar.AnchorPoint = Vector2.new(0, 0)
+    fillBar.BackgroundColor3 = Color3.fromRGB(170, 205, 225)
+    fillBar.BorderSizePixel = 0
+    fillBar.Parent = innerBg
+
+    local fillCorner = Instance.new("UICorner")
+    fillCorner.CornerRadius = UDim.new(0, 2)
+    fillCorner.Parent = fillBar
+
+    gui.Parent = playerGui
+    return gui, container, fillBar
+end
+
+-- Helper: Reliable Warmth Detection
+local function IsPlayerWarm(character)
+    if not character then return false end
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+
+    -- 1. Check equipped item (Lighter / Torch / Light source tools)
+    local tool = character:FindFirstChildOfClass("Tool")
+    if tool then
+        if tool:GetAttribute("Enabled") == true or tool:GetAttribute("IsOn") == true or tool:GetAttribute("TurnedOn") == true then
+            return true
+        end
+
+        for _, desc in ipairs(tool:GetDescendants()) do
+            if desc:IsA("Light") and desc.Enabled then
+                return true
+            elseif desc:IsA("ParticleEmitter") and desc.Enabled and (desc.Name:lower():find("fire") or desc.Name:lower():find("flame") or desc.Name:lower():find("spark")) then
+                return true
+            elseif desc:IsA("Fire") and desc.Enabled then
+                return true
+            end
+        end
+    end
+
+    -- 2. Check nearby room light sources, fireplaces, or candles in Workspace
+    local overlapParams = OverlapParams.new()
+    overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+    
+    local filterList = {character}
+    local entityModel = workspace:FindFirstChild("Frostyma5n")
+    if entityModel then table.insert(filterList, entityModel) end
+    overlapParams.FilterDescendantsInstances = filterList
+
+    local nearbyParts = workspace:GetPartBoundsInRadius(root.Position, 15, overlapParams)
+    for _, part in ipairs(nearbyParts) do
+        if part:IsDescendantOf(entityModel) then continue end
+
+        for _, child in ipairs(part:GetChildren()) do
+            if child:IsA("Light") and child.Enabled then
+                return true
+            elseif child:IsA("Fire") and child.Enabled then
+                return true
+            elseif child:IsA("ParticleEmitter") and child.Enabled and (child.Name:lower():find("fire") or child.Name:lower():find("flame")) then
+                return true
+            end
+        end
+
+        local parent = part.Parent
+        if parent then
+            local pName = parent.Name:lower()
+            if pName:find("fireplace") or pName:find("campfire") or pName:find("light") or pName:find("lamp") or pName:find("candle") or pName:find("heater") then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+--------------------------------------------------------------------------------
+
+local coldGui, coldContainer, fillBar = CreateColdBarUI()
+local currentColdValue = 1.0 -- 1 = Full, 0 = Empty
+
+-- 🔁 Vòng lặp 8 đợt tấn công
+for i = 1, Random.new():NextInteger(4, 10) do
+    local currentRoom = GetRoom()
+    if not currentRoom then break end
+
+    local camera = workspace.CurrentCamera
+    local s = modelTemplate:Clone()
+    s.Parent = workspace
+    s.Name = "Frostyma5n"
+
+    local entity = s:FindFirstChildWhichIsA("BasePart") or s.PrimaryPart or s:FindFirstChild("FrostyNew")
+    if not entity then
+        s:Destroy()
+        break
+    end
+
+    entity.CanCollide = false
+
+    local entrance = currentRoom:FindFirstChild("RoomEntrance")
+    if entrance then
+        entity.CFrame = entrance.CFrame * CFrame.new(0, 0, -30)
+    end
+
+    -- Tắt Particle ban đầu
+    local attachment = entity:FindFirstChild("Attachment")
+    if attachment then
+        for _, v in ipairs(attachment:GetDescendants()) do
+            if v:IsA("ParticleEmitter") then
+                v.Enabled = false
+            end
+        end
+    end
+
+    task.wait(0.5)
+
+    camera.CameraType = Enum.CameraType.Custom
+
+    task.spawn(function()
+        local CameraShaker = game.ReplicatedStorage:FindFirstChild("CameraShaker") or (game.ReplicatedStorage:FindFirstChild("Modules") and game.ReplicatedStorage.Modules:FindFirstChild("CameraShaker"))
+        if CameraShaker then
+            local CameraShakerModule = require(CameraShaker)
+            local camShake = CameraShakerModule.new(Enum.RenderPriority.Camera.Value, function(shakeCf)
+                camera.CFrame = camera.CFrame * shakeCf
+            end)
+            camShake:Start()
+            camShake:ShakeOnce(10, 10, 0.5, 5, 2, 0.5)
+        end
+    end)
+
+    -- Bật Particle
+    if attachment then
+        for _, v in ipairs(attachment:GetDescendants()) do
+            if v:IsA("ParticleEmitter") then
+                v.Enabled = true
+            end
+        end
+    end
+
+    local attacking = true
+
+    local roomConnection
+    roomConnection = workspace.CurrentRooms.ChildAdded:Connect(function()
+        if not attacking then return end
+        attacking = false
+
+        if roomConnection then
+            roomConnection:Disconnect()
+        end
+
+        if s and s.Parent then
+            s:Destroy()
+        end
+    end)
+
+    -- Luồng gây sát thương & hiệu ứng màn hình
+    task.spawn(function()
+        local Lighting = game:GetService("Lighting")
+        local player = LocalPlayer
+
+        local screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "Aihoi"
+        screenGui.IgnoreGuiInset = true
+        screenGui.DisplayOrder = 999999
+        screenGui.Parent = player:WaitForChild("PlayerGui")
+
+        local imageLabel = Instance.new("ImageLabel")
+        imageLabel.BackgroundTransparency = 1
+        imageLabel.BorderSizePixel = 0
+        imageLabel.Position = UDim2.new(0, 0, 0, 0)
+        imageLabel.Size = UDim2.new(1, 0, 1, 0)
+        imageLabel.ScaleType = Enum.ScaleType.Stretch
+        imageLabel.Image = "rbxassetid://10344339712"
+        imageLabel.ImageTransparency = 1
+        imageLabel.Visible = true
+        imageLabel.Parent = screenGui
+
+        local blur = Lighting:FindFirstChild("Blur5")
+        if not blur then
+            blur = Instance.new("BlurEffect")
+            blur.Name = "Blur5"
+            blur.Size = 3
+            blur.Parent = Lighting
+        else
+            blur.Size = 3
+            blur.Enabled = true
+        end
+
+        local damage = 2
+
+        -- ⚡ High-FPS smooth render loop for cold bar and visual updates
+        local renderConn
+        renderConn = RunService.RenderStepped:Connect(function(dt)
+            if not attacking or not entity or not entity.Parent then
+                renderConn:Disconnect()
+                return
+            end
+
+            local character = player.Character
+            if character then
+                local warm = IsPlayerWarm(character)
+                if not warm then
+                    -- Depletes smoothly at 5% per second based on frame time
+                    currentColdValue = math.max(0, currentColdValue - (0.05 * dt))
+                end
+            end
+
+            -- Update bar visual smoothly on every render frame
+            fillBar.Size = UDim2.new(currentColdValue, 0, 1, 0)
+
+            -- Vignette & Blur updates
+            if currentColdValue <= 0 then
+                imageLabel.ImageTransparency = 0.4
+                blur.Enabled = true
+            else
+                imageLabel.ImageTransparency = math.clamp(0.4 + (currentColdValue * 0.6), 0, 1)
+                if currentColdValue > 0.2 then
+                    blur.Enabled = false
+                end
+            end
+        end)
+
+        -- ⏱️ 1-Second tick loop strictly for dealing damage
+        while attacking and entity and entity.Parent do
+            task.wait(1)
+
+            local character = player.Character
+            if not character then continue end
+
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            if not humanoid or humanoid.Health <= 0 then 
+                break
+            end
+
+            -- Damage player only once bar hits 0
+            if currentColdValue <= 0 then
+                pcall(function()
+                    humanoid.Health = math.max(0, humanoid.Health - damage)
+
+                    local statsFolder = game.ReplicatedStorage:FindFirstChild("GameStats")
+                    if statsFolder then
+                        local playerStats = statsFolder:FindFirstChild("Player_" .. player.Name)
+                        if playerStats and playerStats:FindFirstChild("Total") and playerStats.Total:FindFirstChild("DeathCause") then
+                            playerStats.Total.DeathCause.Value = "Frostbite"
+                        end
+                    end
+                end)
+
+                damage = math.max(0, damage + 0.3)
+            end
+        end
+    end)
+
+    -- Chờ lượt tấn công kết thúc
+    repeat
+        task.wait(0.1)
+    until not attacking
+end
+
+-- Fade out cold bar UI on despawn
+if coldContainer then
+    tweenservice:Create(coldContainer, TweenInfo.new(1.5), {GroupTransparency = 1}):Play()
+    task.delay(1.5, function()
+        if coldGui then coldGui:Destroy() end
+    end)
+end
+
+local TweenService = game:GetService("TweenService")
+
+local Ahoi = GetGitSound("https://github.com/eoyoustme/Impossible/raw/main/frostbite%20end.mp3","Frostenddd")
+Ahoi.Parent = workspace
+Ahoi.Volume = 10
+Ahoi.PlaybackSpeed = 1
+Ahoi:Play()
+
+local CameraShaker = require(game.ReplicatedStorage:WaitForChild("CameraShaker"))
+local camera = game.Workspace.CurrentCamera
+local camShake = CameraShaker.new(Enum.RenderPriority.Camera.Value, function(shakeCf)
+    camera.CFrame = camera.CFrame * shakeCf
+end)
+camShake:Start()
+camShake:ShakeOnce(10, 3, 0.1, 6)
+
+-- 🧹 Cleanup
+local frost4 = game.Lighting:FindFirstChild("frost4")
+
+task.wait(1)
+
+local soundObj = workspace:FindFirstChild("Frostyman67")
+if soundObj then 
+    soundObj:Destroy()
+end
+
+local blurObj = game.Lighting:FindFirstChild("Blur5")
+if blurObj then 
+    blurObj:Destroy() 
+end
+
+local player = game.Players.LocalPlayer
+if player and player:FindFirstChild("PlayerGui") then
+    for _, gui in ipairs(player.PlayerGui:GetChildren()) do
+        if gui.Name == "Aihoi" then
+            gui:Destroy()
+        end
+    end
+end
+
+task.wait(3)
+
+local Lighting = game:GetService("Lighting")
+Lighting.Ambient = Color3.new(1, 0, 0)
+Lighting.Brightness = 3
+Lighting.FogEnd = 240
+Lighting.FogStart = 240
+Lighting.FogColor = Color3.new(0, 0, 0)
+game:GetService("TweenService"):Create(Lighting, TweenInfo.new(1,Enum.EasingStyle.Quad), {FogEnd = 0}):Play()
+game.Debris:AddItem(Lighting, 6)
+
+task.wait(1)
+
+local CameraShaker = require(game.ReplicatedStorage:WaitForChild("CameraShaker"))
+local camera = game.Workspace.CurrentCamera
+local camShake = CameraShaker.new(Enum.RenderPriority.Camera.Value, function(shakeCf)
+    camera.CFrame = camera.CFrame * shakeCf
+end)
+camShake:Start()
+camShake:ShakeOnce(10, 3, 0.1, 6)
+
+local Lighting = game:GetService("Lighting")
+Lighting.Ambient = Color3.new(1, 0, 0)
+Lighting.Brightness = 3
+Lighting.FogEnd = 240
+Lighting.FogStart = 240
+Lighting.FogColor = Color3.new(0, 0, 0)
+
+if frost4 and frost4.Parent then
+    frost4:Destroy()
+end
+
+local cac = Instance.new("Sound")
+cac.SoundId = "rbxassetid://9125402735"
+cac.Looped = false
+cac.Volume = 10
+cac.Parent = workspace
+cac.PlaybackSpeed = 0.7
+cac:Play()
+game:GetService("Debris"):AddItem(cac, 3.6)
+
+local Evil = Instance.new("ColorCorrectionEffect")
+Evil.Parent = game.Lighting
+Evil.Name = "frost65"
+tweenservice:Create(Evil, TweenInfo.new(1), {
+    TintColor = Color3.fromRGB(255, 255, 255),
+    Saturation = -0.7,
+    Contrast = 1
+}):Play()
+
+wait(1)
+
+local frost65 = game.Lighting:FindFirstChild("frost65")
+
+if frost65 then
+    tweenservice:Create(frost65, TweenInfo.new(1), {
+        TintColor = Color3.fromRGB(255, 255, 255),
+        Saturation = 0,
+        Contrast = 0
+    }):Play()
+end
+
+wait(5)
+
+if frost65 and frost65.Parent then
+    frost65:Destroy()
+end
+
+cac:Destroy()
+Ahoi:Destroy()
