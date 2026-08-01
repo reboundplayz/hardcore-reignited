@@ -1,0 +1,254 @@
+local LocalPlayer = game.Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local TweenService = game:GetService("TweenService")
+local ContentProvider = game:GetService("ContentProvider")
+local SoundService = game:GetService("SoundService")
+
+-- 1. MAIN UI TREE
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MainUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.DisplayOrder = 999999
+ScreenGui.Parent = PlayerGui
+
+local Jumpscare_Rebound = Instance.new("Frame")
+Jumpscare_Rebound.Name = "Jumpscare_Rebound"
+Jumpscare_Rebound.Size = UDim2.fromScale(1, 1)
+Jumpscare_Rebound.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+Jumpscare_Rebound.BackgroundTransparency = 0
+Jumpscare_Rebound.Visible = false
+Jumpscare_Rebound.Parent = ScreenGui
+
+local Static = Instance.new("ImageLabel")
+Static.Name = "Static"
+Static.Size = UDim2.fromScale(1, 1)
+Static.BackgroundTransparency = 0
+Static.Image = "rbxassetid://236777652"
+Static.ImageTransparency = 0.5
+Static.Parent = Jumpscare_Rebound
+
+local reb = Instance.new("ImageLabel")
+reb.Name = "reb"
+reb.Size = UDim2.new(0, 250, 0, 250)
+reb.Position = UDim2.new(0.5, 0, 0.5, 0)
+reb.AnchorPoint = Vector2.new(0.5, 0.5)
+reb.BackgroundTransparency = 1
+reb.Image = "rbxassetid://136737940723651"
+reb.ScaleType = Enum.ScaleType.Fit
+reb.Visible = false
+reb.ZIndex = 2
+reb.Parent = Jumpscare_Rebound
+
+-- 2. AUDIO SETUP
+local oldSound = Instance.new("Sound")
+oldSound.Name = "JumpscareSound"
+oldSound.SoundId = "rbxassetid://109582246349306"
+oldSound.Volume = 20
+oldSound.PlaybackSpeed = 1.03
+oldSound.Looped = false
+oldSound.Parent = SoundService
+
+task.spawn(function()
+	ContentProvider:PreloadAsync({ oldSound })
+end)
+
+local function playSoundSafe(soundObj, timePos, speed, volume)
+	if not soundObj or not soundObj.Parent then
+		return
+	end
+	soundObj:Stop()
+	soundObj.TimePosition = timePos or 0
+	soundObj.PlaybackSpeed = speed or 1
+	soundObj.Volume = volume or 1
+	soundObj:Play()
+end
+
+-- HELPER FUNCTIONS & COLOR PALETTES
+local colors = {
+	Color3.fromRGB(160, 206, 255),
+	Color3.fromRGB(0, 123, 255),
+	Color3.fromRGB(0, 208, 255),
+	Color3.fromRGB(120, 174, 255),
+	Color3.fromRGB(255, 255, 255),
+	Color3.fromRGB(37, 84, 255),
+	Color3.fromRGB(133, 255, 237)
+}
+
+local function lerp(p1, p2, p3)
+	return p1 + (p2 - p1) * p3
+end
+
+local function v2(p1, p2)
+	local v1 = p1[math.random(1, #p1)]
+	while v1 == p2 do
+		v1 = p1[math.random(1, #p1)]
+	end
+	return v1
+end
+
+-- 3. JUMPSCARE RUNNER TIMELINE
+local function runJumpscare(p1)
+	if SoundService:FindFirstChild("Main") then
+		SoundService.Main.Volume = 0
+	end
+	
+	p1.deathtick = tick() + 3
+
+	-- INSTANT VISUAL DISPLAY
+	Jumpscare_Rebound.Visible = true
+	Static.Visible = true
+	reb.Visible = true
+
+	-- PLAY FIRST INTRO SOUND IMMEDIATELY
+	playSoundSafe(oldSound, 0, 1.03, 20)
+	
+	local oldActive = true
+	local activeGlitchTween = nil
+	local sizeTween1 = nil
+	
+	local v1 = 0
+	local t2 = { 0, -180, 180 }
+	local t3 = { "rbxassetid://236777652", "rbxassetid://236543215" }
+	
+	local soundSpamAllowed = false
+	task.delay(0.65, function()
+		soundSpamAllowed = true
+	end)
+
+	local lastSoundTick = 0
+
+	-- MAIN GLITCH & SOUND SPAM LOOP
+	task.spawn(function()
+		while oldActive and ScreenGui.Parent do
+			task.wait(0.05)
+
+			-- Safety double check to break immediately if deactivated during wait
+			if not oldActive then break end
+
+			-----------------------
+			-- 1. MOVING COLOR-CHANGING STATIC
+			-----------------------
+			local randColor = colors[math.random(1, #colors)]
+			Static.BackgroundColor3 = randColor
+			Static.ImageTransparency = lerp(Static.ImageTransparency, v1, 0.1)
+
+			local currRot = Static.Rotation
+			local v4 = t2[math.random(1, #t2)]
+			Static.Rotation = (v4 == currRot) and v2(t2, currRot) or v4
+
+			local currImg = Static.Image
+			local v7 = t3[math.random(1, #t3)]
+			Static.Image = (v7 == currImg) and v2(t3, currImg) or v7
+
+			if math.random(1, 5) == 1 then
+				v1 = math.random(0, 50) / 100
+			end
+
+			-----------------------
+			-- 2. FACE SPAM GLITCH
+			-----------------------
+			local Rotation = reb.Rotation
+			local rotOffset = (math.random(1, 2) == 1) and -Rotation or (Rotation + math.random(-360, 360))
+			local finalRot = rotOffset + math.random(-360, 360)
+			if finalRot > 180 then finalRot = 180 end
+			if finalRot < -180 then finalRot = -180 end
+
+			reb.ImageColor3 = randColor
+
+			sizeTween1 = TweenService:Create(reb, TweenInfo.new(0.05), {
+				Size = UDim2.new(0, math.random(200, 700), 0, math.random(200, 700))
+			})
+			sizeTween1:Play()
+
+			activeGlitchTween = TweenService:Create(reb, TweenInfo.new(0.05, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Position = UDim2.new(math.random(150, 800) / 1000, 0, math.random(150, 800) / 1000, 0),
+				Rotation = -finalRot
+			})
+			activeGlitchTween:Play()
+
+			-----------------------
+			-- 3. RAPID SOUND SPAM
+			-----------------------
+			if soundSpamAllowed and (tick() - lastSoundTick >= 0.08) then
+				lastSoundTick = tick()
+				playSoundSafe(oldSound, 0.25 + (math.random() / 10), math.random(50, 125) / 100, 20)
+			end
+		end
+	end)
+	
+	-- TIMELINE OUTRO
+	task.wait(2.2)
+	p1.deathtick = tick() + 1.5
+	oldActive = false -- Kill loop flag
+	
+	-- Wait one frame to ensure loop thread fully exits before canceling
+	task.wait(0.08)
+	
+	-- STOP SPAM TWEENS
+	if activeGlitchTween then activeGlitchTween:Cancel() end
+	if sizeTween1 then sizeTween1:Cancel() end
+	
+	if oldSound then
+		oldSound:Stop()
+	end
+	
+	-----------------------
+	-- 4. FINAL FACE ZOOM (PURE SCALE)
+	-----------------------
+	reb.Image = "rbxassetid://136737940723651"
+	reb.ScaleType = Enum.ScaleType.Stretch
+	reb.ImageTransparency = 0
+	reb.AnchorPoint = Vector2.new(0.5, 0.5)
+	
+	-- Calculate shortest rotational path
+	local startRot = reb.Rotation
+	local desiredBase = math.random(-15, 15)
+	local diff = (desiredBase - startRot) % 360
+	if diff > 180 then diff = diff - 360 end
+	local targetRotation = startRot + diff
+
+	-- Reset size & position to solid scale values before tweening
+	reb.Size = UDim2.fromScale(0.35, 0.35)
+	reb.Position = UDim2.fromScale(0.5, 0.5)
+	reb.ImageColor3 = Color3.fromRGB(255, 255, 255)
+	
+	playSoundSafe(oldSound, 0, 0.7, 20)
+	
+	-- TWEEN DIRECTLY TO HUGE SCREEN SCALE (1.5, 1.5)
+	local finalZoomTween = TweenService:Create(reb, TweenInfo.new(1.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(1.5, 1.5),
+		Rotation = targetRotation,
+		ImageColor3 = Color3.fromRGB(255, 0, 0)
+	})
+	finalZoomTween:Play()
+	
+	-- Stay visible on screen
+	task.wait(2.2)
+	
+	-- SCREEN FADE OUT
+	TweenService:Create(reb, TweenInfo.new(1.2), {
+		ImageTransparency = 1
+	}):Play()
+	TweenService:Create(Jumpscare_Rebound, TweenInfo.new(1), {
+		BackgroundTransparency = 1
+	}):Play()
+	TweenService:Create(Static, TweenInfo.new(1), {
+		BackgroundTransparency = 1,
+		ImageTransparency = 1
+	}):Play()
+	
+	task.delay(1.5, function()
+		Jumpscare_Rebound.Visible = false
+		if SoundService:FindFirstChild("Main") then
+			SoundService.Main.Volume = 0.5
+		end
+		oldSound:Destroy()
+		ScreenGui:Destroy()
+	end)
+end
+
+-- Run Context
+local fakeContext = { deathtick = 0 }
+runJumpscare(fakeContext)
