@@ -1,0 +1,980 @@
+local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
+local Lighting = game:GetService("Lighting")
+local Debris = game:GetService("Debris")
+local LocalPlayer = game.Players.LocalPlayer
+local CurrentRooms = workspace:WaitForChild("CurrentRooms")
+
+local function GetGitSound(GithubSnd, SoundName)
+	if not (writefile and isfile and getcustomasset and game.HttpGet) then return nil end
+	if not isfile(SoundName .. ".mp3") then
+		local success, content = pcall(function() return game:HttpGet(GithubSnd) end)
+		if success and content then
+			writefile(SoundName .. ".mp3", content)
+		else
+			return nil
+		end
+	end
+	local sound = Instance.new("Sound")
+	local getasset = getcustomasset or getsynasset
+	if getasset then
+		sound.SoundId = getasset(SoundName .. ".mp3")
+	end
+	return sound
+end
+
+local function playDeathSound()
+	task.spawn(function()
+		local deathSound = GetGitSound("https://github.com/reboundplayz/hardcore-reignited/raw/refs/heads/main/Oblivion_Death.ogg", "Oblivion_Death")
+		if deathSound then
+			local mainGroup = SoundService:FindFirstChild("Main")
+			deathSound.SoundGroup = if mainGroup then mainGroup:FindFirstChild("Sfx") or mainGroup else nil
+			deathSound.Volume = 2
+			deathSound.Parent = SoundService
+			deathSound:Play()
+			Debris:AddItem(deathSound, 10)
+		end
+	end)
+end
+
+local Module_Events = {
+	flicker = function() end,
+	init = function() end
+}
+pcall(function()
+	local eventsModule = game:GetService("ReplicatedStorage"):FindFirstChild("ModulesClient") 
+		and game:GetService("ReplicatedStorage").ModulesClient:FindFirstChild("Module_Events")
+	if eventsModule then
+		Module_Events = require(eventsModule)
+	end
+end)
+
+local t = {}
+local t2 = {
+	Ambience = "rbxassetid://79981254132880",
+	Riser = "rbxassetid://109905197240048",
+	EndSound = "rbxassetid://108971427449805",
+	AmbienceLoopStart = 10,
+	AmbienceVolume = 1.4,
+	WindowlessAmbienceVolume = 0.4,
+	IntroTime = 0.4,
+	SkyboxColors = { Color3.fromRGB(33, 5, 35), Color3.fromRGB(44, 30, 59), Color3.fromRGB(57, 30, 59) },
+	AttackSkyboxColor = Color3.fromRGB(90, 30, 175),
+	FlashColor = Color3.fromRGB(255, 255, 255),
+	SurfaceLightStorm = 2.5,
+	SurfaceLightAttack = 5,
+	LightningBrightness = 10,
+	RainSpeed = NumberRange.new(30, 55),
+	GlassSoundVolume = 1.5,
+	GlassSoundSpeed = 1.557,
+	ThunderVolume = 8,
+	ThunderSpeedRange = { 0.75, 0.85 },
+	RandomLightning = { 2, 6 },
+	FlickerInterval = { 3, 7 },
+	FlickerColor = Color3.fromRGB(126, 34, 206),
+	DimLightFactor = 0.45,
+	DimNeonColor = Color3.fromRGB(127, 105, 92),
+	PurpleBulbChance = 0.4,
+	FlickerRumble = { 0.5, 4, 0.05, 0.4 },
+	DarkBrightness = 0,
+	DarkAmbient = Color3.fromRGB(8, 4, 12),
+	BarColor = Color3.fromRGB(126, 34, 206),
+	BarBackground = Color3.fromRGB(18, 4, 26),
+	VignetteColor = Color3.fromRGB(96, 0, 150),
+	MaxBlur = 14,
+	MaxSaturation = -0.45,
+	IntroShake = { 5, 8, 0.1, 5 },
+	AttackShake = { 3.5, 10 },
+	FinalShake = { 3.5, 12, 0.05, 1.2 },
+	DespawnShake = { 4, 6, 0.2, 4 }
+}
+
+local t3 = {
+	active = false,
+	attacking = false,
+	suspended = false,
+	attackValue = 0,
+	snapshots = {},
+	connections = {}
+}
+
+local function snap(p1, p2)
+	t3.snapshots[p1] = t3.snapshots[p1] or {}
+	if t3.snapshots[p1][p2] ~= nil then return end
+	t3.snapshots[p1][p2] = p1[p2]
+end
+
+local function tweenTo(p1, p2, p3)
+	TweenService:Create(p1, TweenInfo.new(p2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), p3):Play()
+end
+
+local function getWindows()
+	local windows = {}
+	for _, v in ipairs(CurrentRooms:GetChildren()) do
+		for _, v2 in ipairs(v:GetDescendants()) do
+			if v2:IsA("Model") and (v2.Name == "Window" or v2.Name == "Window_Tall") then
+				table.insert(windows, v2)
+			end
+		end
+	end
+	return windows
+end
+
+local function roomIsWindowless(p1)
+	for _, v in ipairs(p1:GetDescendants()) do
+		if v:IsA("Model") and (v.Name == "Window" or v.Name == "Window_Tall") then
+			return false
+		end
+	end
+	return true
+end
+
+local function insideWindow(p1)
+	local v1 = p1.Parent
+	while v1 and v1 ~= workspace do
+		if v1:IsA("Model") and (v1.Name == "Window" or v1.Name == "Window_Tall") then
+			return true
+		end
+		v1 = v1.Parent
+	end
+	return false
+end
+
+local function getRoomLights(p1)
+	local lights = {}
+	for _, v in ipairs(p1:GetDescendants()) do
+		if (v:IsA("PointLight") or v:IsA("SpotLight") or v:IsA("SurfaceLight")) and not insideWindow(v) then
+			table.insert(lights, v)
+		end
+	end
+	return lights
+end
+
+local function getRoomNeons(p1)
+	local neons = {}
+	for _, v in ipairs(p1:GetDescendants()) do
+		if v:IsA("BasePart") and (v.Name == "Neon" and not insideWindow(v)) then
+			table.insert(neons, v)
+		end
+	end
+	return neons
+end
+
+local function getWindowLights(p1)
+	local lights = {}
+	for _, v in ipairs(p1:GetDescendants()) do
+		if v:IsA("Model") and (v.Name == "Window" or v.Name == "Window_Tall") then
+			for _, child in ipairs(v:GetDescendants()) do
+				if child:IsA("Light") and child.Parent and child.Parent:IsA("BasePart") then
+					table.insert(lights, { light = child, windowModel = v })
+				end
+			end
+		end
+	end
+	return lights
+end
+
+local function isPlayerInLight()
+	local char = LocalPlayer.Character
+	if not char then return false end
+
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	local head = char:FindFirstChild("Head")
+	if not hrp then return false end
+
+	local roomNum = LocalPlayer:GetAttribute("CurrentRoom")
+	if not roomNum then return false end
+	local room = CurrentRooms:FindFirstChild(tostring(roomNum))
+	if not room then return false end
+
+	local checkPoints = {
+		hrp.Position,
+		head and head.Position or (hrp.Position + Vector3.new(0, 1.5, 0)),
+		hrp.Position - Vector3.new(0, 2, 0)
+	}
+
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+	raycastParams.IgnoreWater = true
+
+	for _, item in ipairs(getWindowLights(room)) do
+		local light = item.light
+		local windowModel = item.windowModel
+
+		if light.Enabled and light.Brightness > 0.05 and light.Parent and light.Parent:IsA("BasePart") then
+			local lightPart = light.Parent
+			local lightPos = lightPart.Position
+
+			raycastParams.FilterDescendantsInstances = { char, lightPart, windowModel }
+
+			for _, targetPos in ipairs(checkPoints) do
+				local toTarget = targetPos - lightPos
+				local dist = toTarget.Magnitude
+
+				local maxRange = light.Range > 0 and light.Range or 25
+				if dist <= maxRange then
+
+					local inCone = true
+					if light:IsA("SpotLight") then
+						local faceVector = Vector3.FromNormalId(light.Face)
+						local lightDir = lightPart.CFrame:VectorToWorldSpace(faceVector)
+						local angle = math.deg(math.acos(math.clamp(lightDir:Dot(toTarget.Unit), -1, 1)))
+
+						if angle > (light.Angle / 2) then
+							inCone = false
+						end
+					elseif light:IsA("SurfaceLight") then
+						local faceVector = Vector3.FromNormalId(light.Face)
+						local lightDir = lightPart.CFrame:VectorToWorldSpace(faceVector)
+
+						if lightDir:Dot(toTarget.Unit) <= 0 then
+							inCone = false
+						end
+					end
+
+					if inCone then
+						local offset = 5
+
+						if dist <= offset then
+							return true
+						else
+							local startPos = lightPos + (toTarget.Unit * offset)
+							local rayDirection = toTarget - (toTarget.Unit * offset)
+
+							local result = workspace:Raycast(startPos, rayDirection, raycastParams)
+
+							if not result then
+								return true
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	return false
+end
+
+local function styleWindow(p1, p2, p3)
+	for _, v in ipairs(p1:GetDescendants()) do
+		if v:IsA("BasePart") and v.Name == "Skybox" then
+			t3.snapshots[v] = t3.snapshots[v] or {}
+			if t3.snapshots[v].Color == nil then t3.snapshots[v].Color = v.Color end
+			TweenService:Create(v, TweenInfo.new(p3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Color = p2 and t2.AttackSkyboxColor or t2.SkyboxColors[1]
+			}):Play()
+			continue
+		end
+
+		if v:IsA("Light") and v.Name == "SurfaceLight" then
+			t3.snapshots[v] = t3.snapshots[v] or {}
+			if t3.snapshots[v].Brightness == nil then t3.snapshots[v].Brightness = v.Brightness end
+			if t3.snapshots[v].Color == nil then t3.snapshots[v].Color = v.Color end
+			TweenService:Create(v, TweenInfo.new(p3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Brightness = p2 and t2.SurfaceLightAttack or t2.SurfaceLightStorm,
+				Color = t2.VignetteColor
+			}):Play()
+			continue
+		end
+
+		if v:IsA("Sound") and v.Name == "PlaySound" then
+			t3.snapshots[v] = t3.snapshots[v] or {}
+			if t3.snapshots[v].Volume == nil then t3.snapshots[v].Volume = v.Volume end
+			if t3.snapshots[v].PlaybackSpeed == nil then t3.snapshots[v].PlaybackSpeed = v.PlaybackSpeed end
+			TweenService:Create(v, TweenInfo.new(p3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Volume = t2.GlassSoundVolume
+			}):Play()
+			v.PlaybackSpeed = t2.GlassSoundSpeed
+			continue
+		end
+
+		if v:IsA("ParticleEmitter") and (v.Parent and v.Parent.Name == "Glass") then
+			t3.snapshots[v] = t3.snapshots[v] or {}
+			if t3.snapshots[v].Speed == nil then t3.snapshots[v].Speed = v.Speed end
+			v.Speed = t2.RainSpeed
+		end
+	end
+end
+
+local function styleAllWindows(p1, p2)
+	for _, v in ipairs(getWindows()) do
+		styleWindow(v, p1, p2)
+	end
+end
+
+local function thunderFlash()
+	local v1 = t3.attacking and t2.AttackSkyboxColor or t2.SkyboxColors[1]
+	local v2 = t3.attacking and t2.SurfaceLightAttack or t2.SurfaceLightStorm
+
+	for _, v in ipairs(getWindows()) do
+		for _, v3 in ipairs(v:GetDescendants()) do
+			if v3:IsA("Light") and v3.Name == "Lightning" then
+				v3.Color = t2.FlashColor
+				v3.Brightness = t2.LightningBrightness
+				TweenService:Create(v3, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Brightness = 0 }):Play()
+				continue
+			end
+
+			if v3:IsA("Light") and v3.Name == "SurfaceLight" then
+				t3.snapshots[v3] = t3.snapshots[v3] or {}
+				if t3.snapshots[v3].Brightness == nil then t3.snapshots[v3].Brightness = v3.Brightness end
+				if t3.snapshots[v3].Color == nil then t3.snapshots[v3].Color = v3.Color end
+
+				v3.Color = t2.FlashColor
+				v3.Brightness = t2.LightningBrightness
+				TweenService:Create(v3, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Brightness = v2,
+					Color = t2.VignetteColor
+				}):Play()
+				continue
+			end
+
+			if v3:IsA("BasePart") and v3.Name == "Skybox" then
+				t3.snapshots[v3] = t3.snapshots[v3] or {}
+				if t3.snapshots[v3].Color == nil then t3.snapshots[v3].Color = v3.Color end
+
+				v3.Color = t2.FlashColor
+				TweenService:Create(v3, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Color = v1 }):Play()
+				continue
+			end
+
+			if v3:IsA("Sound") and v3.Name == "Thunder" then
+				local range = t2.ThunderSpeedRange
+				v3.PlaybackSpeed = range[1] + math.random() * (range[2] - range[1])
+				v3.Volume = t2.ThunderVolume
+				v3:Play()
+			end
+		end
+	end
+
+	t3.snapshots[Lighting] = t3.snapshots[Lighting] or {}
+	if t3.snapshots[Lighting].Brightness == nil then
+		t3.snapshots[Lighting].Brightness = Lighting.Brightness
+	end
+
+	Lighting.Brightness = 2
+	TweenService:Create(Lighting, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Brightness = t2.DarkBrightness
+	}):Play()
+end
+
+local function applyRoomBaseLighting(p1)
+	for _, v in ipairs(getRoomLights(p1)) do
+		t3.snapshots[v] = t3.snapshots[v] or {}
+		if t3.snapshots[v].Enabled == nil then t3.snapshots[v].Enabled = v.Enabled end
+		if t3.snapshots[v].Brightness == nil then t3.snapshots[v].Brightness = v.Brightness end
+		if t3.snapshots[v].Color == nil then t3.snapshots[v].Color = v.Color end
+
+		TweenService:Create(v, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Brightness = (t3.snapshots[v].Brightness or v.Brightness) * t2.DimLightFactor
+		}):Play()
+	end
+
+	for _, v in ipairs(getRoomNeons(p1)) do
+		t3.snapshots[v] = t3.snapshots[v] or {}
+		if t3.snapshots[v].Color == nil then t3.snapshots[v].Color = v.Color end
+
+		TweenService:Create(v, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Color = t2.DimNeonColor
+		}):Play()
+	end
+end
+
+local function purpleFlicker()
+	local v1 = Random.new(tick())
+	for _, v in ipairs(CurrentRooms:GetChildren()) do
+		local v2 = math.random(6, 12) / 10
+		local modified = {}
+
+		for _, v3 in ipairs(getRoomNeons(v)) do
+			if math.random() < t2.PurpleBulbChance then
+				t3.snapshots[v3] = t3.snapshots[v3] or {}
+				if t3.snapshots[v3].Color == nil then t3.snapshots[v3].Color = v3.Color end
+
+				v3.Color = t2.FlickerColor
+				table.insert(modified, v3)
+
+				for _, v4 in ipairs(v3.Parent:GetDescendants()) do
+					if v4:IsA("Light") then
+						t3.snapshots[v4] = t3.snapshots[v4] or {}
+						if t3.snapshots[v4].Color == nil then t3.snapshots[v4].Color = v4.Color end
+						v4.Color = t2.FlickerColor
+						table.insert(modified, v4)
+					end
+				end
+			end
+		end
+
+		Module_Events.flicker(v, v2, 100, v1)
+		task.delay(v2 + 0.4, function()
+			for _, item in ipairs(modified) do
+				if item and item.Parent then
+					if item:IsA("BasePart") then
+						item.Color = t2.DimNeonColor
+					else
+						item.Color = t3.snapshots[item] and t3.snapshots[item].Color or item.Color
+					end
+				end
+			end
+		end)
+	end
+
+	if t3.state and t3.state.camShaker then
+		local r = t2.FlickerRumble
+		pcall(function() t3.state.camShaker:ShakeOnce(r[1], r[2], r[3], r[4]) end)
+	end
+end
+
+local function restoreAll(p1)
+	for k, v in pairs(t3.snapshots) do
+		if k and k.Parent then
+			for k2, v2 in pairs(v) do
+				local valType = typeof(v2)
+				if valType == "number" or valType == "Color3" then
+					TweenService:Create(k, TweenInfo.new(p1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+						[k2] = v2
+					}):Play()
+				else
+					k[k2] = v2
+				end
+			end
+		end
+	end
+	task.delay(p1, function() t3.snapshots = {} end)
+end
+
+local function updateAmbienceForRoom()
+	if t3.suspended or not t3.ambience then return end
+
+	local v1 = LocalPlayer:GetAttribute("CurrentRoom")
+	local v2 = if v1 then CurrentRooms:FindFirstChild(tostring(v1)) else v1
+	local vol, hGain, mGain
+
+	if v2 and not roomIsWindowless(v2) then
+		vol, hGain, mGain = t2.AmbienceVolume, 0, 0
+	else
+		vol, hGain, mGain = t2.WindowlessAmbienceVolume, -22, -8
+	end
+
+	TweenService:Create(t3.ambience, TweenInfo.new(1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Volume = vol }):Play()
+	if t3.ambienceEq then
+		TweenService:Create(t3.ambienceEq, TweenInfo.new(1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			HighGain = hGain,
+			MidGain = mGain
+		}):Play()
+	end
+end
+
+local function startAmbience()
+	local Sound = Instance.new("Sound")
+	Sound.SoundId = t2.Ambience
+	Sound.Looped = true
+
+	local Main = SoundService:FindFirstChild("Main")
+	Sound.SoundGroup = if Main then Main:FindFirstChild("Ambience") or Main else nil
+
+	local v2 = LocalPlayer:GetAttribute("CurrentRoom")
+	local v3 = if v2 then CurrentRooms:FindFirstChild(tostring(v2)) else v2
+	Sound.Volume = if v3 and not roomIsWindowless(v3) then t2.AmbienceVolume else t2.WindowlessAmbienceVolume
+
+	local LimboMuffle = Instance.new("EqualizerSoundEffect")
+	LimboMuffle.Name = "LimboMuffle"
+	LimboMuffle.Parent = Sound
+	Sound.Parent = SoundService
+
+	Sound.DidLoop:Connect(function()
+		Sound.TimePosition = t2.AmbienceLoopStart
+	end)
+	Sound:Play()
+
+	t3.ambience = Sound
+	t3.ambienceEq = LimboMuffle
+end
+
+local function stopAmbience(p1)
+	if not t3.ambience then return end
+
+	local ambience = t3.ambience
+	t3.ambience, t3.ambienceEq = nil, nil
+
+	if p1 then
+		ambience:Stop()
+		ambience:Destroy()
+		return
+	end
+
+	TweenService:Create(ambience, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Volume = 0 }):Play()
+	task.delay(2, function() ambience:Destroy() end)
+end
+
+local function buildBar()
+	if t3.barGui then t3.barGui:Destroy() end
+
+	local LimboBar = Instance.new("ScreenGui")
+	LimboBar.Name = "LimboBar"
+	LimboBar.ResetOnSpawn = false
+	LimboBar.IgnoreGuiInset = true
+	LimboBar.DisplayOrder = 12
+	LimboBar.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+	local Holder = Instance.new("Frame")
+	Holder.Name = "Holder"
+	Holder.AnchorPoint = Vector2.new(0, 0.5)
+	Holder.Position = UDim2.new(-0.12, 0, 0.5, 0)
+	Holder.Size = UDim2.new(0, 22, 0.55, 0)
+	Holder.BackgroundColor3 = t2.BarBackground
+	Holder.BackgroundTransparency = 0.3
+	Holder.BorderSizePixel = 0
+	Holder.Parent = LimboBar
+
+	local UICorner = Instance.new("UICorner")
+	UICorner.CornerRadius = UDim.new(0, 6)
+	UICorner.Parent = Holder
+
+	local UIStroke = Instance.new("UIStroke")
+	UIStroke.Color = t2.BarColor
+	UIStroke.Thickness = 2
+	UIStroke.Parent = Holder
+
+	local UIPadding = Instance.new("UIPadding")
+	UIPadding.PaddingBottom = UDim.new(0, 3)
+	UIPadding.PaddingTop = UDim.new(0, 3)
+	UIPadding.PaddingLeft = UDim.new(0, 3)
+	UIPadding.PaddingRight = UDim.new(0, 3)
+	UIPadding.Parent = Holder
+
+	local Fill = Instance.new("Frame")
+	Fill.Name = "Fill"
+	Fill.AnchorPoint = Vector2.new(0.5, 1)
+	Fill.Position = UDim2.new(0.5, 0, 1, 0)
+	Fill.Size = UDim2.new(1, 0, 0, 0)
+	Fill.BackgroundColor3 = t2.BarColor
+	Fill.BorderSizePixel = 0
+	Fill.Parent = Holder
+
+	local UICorner2 = Instance.new("UICorner")
+	UICorner2.CornerRadius = UDim.new(0, 5)
+	UICorner2.Parent = Fill
+
+	t3.barGui = LimboBar
+	t3.barHolder = Holder
+	t3.barFill = Fill
+end
+
+local function updateBar(p1)
+	if not t3.barFill then return end
+	TweenService:Create(t3.barFill, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = UDim2.new(1, 0, math.clamp(p1, 0, 1), 0)
+	}):Play()
+end
+
+local function ensureSicknessEffects()
+	if not t3.colorCorrection then
+		local LimboSickness = Instance.new("ColorCorrectionEffect")
+		LimboSickness.Name = "LimboSickness"
+		LimboSickness.TintColor = Color3.fromRGB(255, 255, 255)
+		LimboSickness.Parent = Lighting
+		t3.colorCorrection = LimboSickness
+	end
+
+	if not t3.blur then
+		local LimboBlur = Instance.new("BlurEffect")
+		LimboBlur.Name = "LimboBlur"
+		LimboBlur.Size = 0
+		LimboBlur.Parent = Lighting
+		t3.blur = LimboBlur
+	end
+end
+
+local function updateSickness(p1)
+	if not t3.suspended then
+		ensureSicknessEffects()
+		local v1 = math.clamp(p1, 0, 1)
+		TweenService:Create(t3.colorCorrection, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			TintColor = Color3.fromRGB(255, 255, 255):Lerp(t2.VignetteColor, v1),
+			Saturation = t2.MaxSaturation * v1
+		}):Play()
+		TweenService:Create(t3.blur, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Size = t2.MaxBlur * v1
+		}):Play()
+	end
+end
+
+local function bindCharacter()
+	for _, v2 in ipairs({ "bar", "sick", "died", "health" }) do
+		if t3.connections[v2] then
+			t3.connections[v2]:Disconnect()
+			t3.connections[v2] = nil
+		end
+	end
+
+	local Character = LocalPlayer.Character
+	t3.boundCharacter = Character
+
+	if Character then
+		local deadState = false
+
+		t3.connections.bar = Character:GetAttributeChangedSignal("LimboBar"):Connect(function()
+			updateBar(Character:GetAttribute("LimboBar") or 0)
+		end)
+		t3.connections.sick = Character:GetAttributeChangedSignal("LimboSickness"):Connect(function()
+			updateSickness(Character:GetAttribute("LimboSickness") or 0)
+		end)
+
+		local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+		if Humanoid then
+			if Humanoid.Health <= 0 then deadState = true end
+
+			t3.connections.died = Humanoid.Died:Connect(function()
+				deadState = true
+				if (t3.attackValue or 0) >= 100 or (Character:GetAttribute("LimboBar") or 0) >= 1 then
+					playDeathSound()
+				end
+
+				if t3.barFill then
+					TweenService:Create(t3.barFill, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+						Size = UDim2.new(1, 0, 0, 0)
+					}):Play()
+				end
+				updateSickness(0)
+				if t3.barHolder then
+					TweenService:Create(t3.barHolder, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+						Position = UDim2.new(-0.12, 0, 0.5, 0)
+					}):Play()
+				end
+			end)
+
+			t3.connections.health = Humanoid.HealthChanged:Connect(function(p1)
+				if not (deadState and p1 > 0) then return end
+				deadState = false
+				updateBar(Character:GetAttribute("LimboBar") or 0)
+				updateSickness(Character:GetAttribute("LimboSickness") or 0)
+				if t3.active and t3.barHolder then
+					TweenService:Create(t3.barHolder, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+						Position = UDim2.new(0.03, 0, 0.5, 0)
+					}):Play()
+				end
+			end)
+		end
+
+		updateBar(Character:GetAttribute("LimboBar") or 0)
+		updateSickness(Character:GetAttribute("LimboSickness") or 0)
+
+		if t3.active and not deadState and t3.barHolder then
+			TweenService:Create(t3.barHolder, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Position = UDim2.new(0.03, 0, 0.5, 0)
+			}):Play()
+		end
+	end
+
+	if not t3.connections.room then
+		t3.connections.room = LocalPlayer:GetAttributeChangedSignal("CurrentRoom"):Connect(updateAmbienceForRoom)
+	end
+
+	if not t3.connections.charAdded then
+		t3.connections.charAdded = LocalPlayer.CharacterAdded:Connect(function(p1)
+			if t3.active then
+				p1:WaitForChild("Humanoid", 5)
+				bindCharacter()
+			end
+		end)
+	end
+end
+
+local function onRoomAdded(p1)
+	if not t3.active or t3.suspended then return end
+	task.wait(0.1)
+	applyRoomBaseLighting(p1)
+
+	for _, v in ipairs(p1:GetDescendants()) do
+		if v:IsA("Model") and (v.Name == "Window" or v.Name == "Window_Tall") then
+			styleWindow(v, t3.attacking, 0.5)
+		end
+	end
+	updateAmbienceForRoom()
+end
+
+local function lightningLoop(p1)
+	while t3.active and t3.loopGen == p1 do
+		task.wait(math.random(t2.RandomLightning[1], t2.RandomLightning[2]))
+		if t3.active and t3.loopGen == p1 then
+			thunderFlash()
+		end
+	end
+end
+
+local function attackThunderLoop()
+	while t3.active and t3.attacking do
+		thunderFlash()
+		task.wait(math.random(6, 19) / 100)
+	end
+end
+
+local function attackLightValueLoop()
+	if t3.valueLoopRunning then return end
+	t3.valueLoopRunning = true
+
+	t3.attackValue = t3.attackValue or 0
+
+	while t3.active and (t3.attacking or t3.attackValue > 0) do
+		local char = LocalPlayer.Character
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+		if hum and hum.Health > 0 then
+			local inHitbox = t3.attacking and isPlayerInLight()
+
+			if inHitbox then
+				t3.attackValue = math.clamp(t3.attackValue + 1, 0, 100)
+			else
+				t3.attackValue = math.clamp(t3.attackValue - 0.025, 0, 100)
+			end
+
+			local progress = t3.attackValue / 100
+			char:SetAttribute("LimboBar", progress)
+			char:SetAttribute("LimboSickness", progress)
+
+			if t3.attackValue >= 100 then
+				playDeathSound()
+				hum.Health = 0
+				break
+			end
+		end
+
+		task.wait(0.1)
+	end
+
+	t3.valueLoopRunning = false
+end
+
+local function flickerLoop(p1)
+	while t3.active and t3.loopGen == p1 do
+		task.wait(math.random(t2.FlickerInterval[1], t2.FlickerInterval[2]))
+		if t3.active and t3.loopGen == p1 then
+			purpleFlicker()
+		end
+	end
+end
+
+local function startLoops()
+	t3.loopGen = (t3.loopGen or 0) + 1
+	local loopGen = t3.loopGen
+
+	task.spawn(lightningLoop, loopGen)
+	task.spawn(flickerLoop, loopGen)
+	task.spawn(function()
+		while t3.active and t3.loopGen == loopGen do
+			task.wait(0.5)
+			if not t3.active or (LocalPlayer.Character == nil or LocalPlayer.Character == t3.boundCharacter) then
+				continue
+			end
+			bindCharacter()
+		end
+	end)
+end
+
+-- MODULE FUNCTIONS
+function t.intro(p1)
+	if p1 and p1.dead then return end
+	if t3.active then return end
+
+	t3.active = true
+	t3.attacking = false
+	t3.suspended = false
+	t3.state = p1
+	t3.snapshots = {}
+
+	pcall(function() Module_Events.init(p1) end)
+	buildBar()
+	ensureSicknessEffects()
+	bindCharacter()
+
+	if t3.barHolder then
+		TweenService:Create(t3.barHolder, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Position = UDim2.new(0.03, 0, 0.5, 0)
+		}):Play()
+	end
+
+	t3.snapshots[Lighting] = t3.snapshots[Lighting] or {}
+	if t3.snapshots[Lighting].Brightness == nil then t3.snapshots[Lighting].Brightness = Lighting.Brightness end
+	if t3.snapshots[Lighting].Ambient == nil then t3.snapshots[Lighting].Ambient = Lighting.Ambient end
+	if t3.snapshots[Lighting].OutdoorAmbient == nil then t3.snapshots[Lighting].OutdoorAmbient = Lighting.OutdoorAmbient end
+
+	TweenService:Create(Lighting, TweenInfo.new(1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Brightness = t2.DarkBrightness,
+		Ambient = t2.DarkAmbient,
+		OutdoorAmbient = t2.DarkAmbient
+	}):Play()
+
+	for _, v in ipairs(CurrentRooms:GetChildren()) do
+		applyRoomBaseLighting(v)
+	end
+
+	task.spawn(function()
+		styleAllWindows(false, t2.IntroTime)
+		for i = 1, 6 do
+			local color = i % 2 == 0 and t2.SkyboxColors[1] or t2.SkyboxColors[i % #t2.SkyboxColors + 1]
+			for _, v in ipairs(getWindows()) do
+				for _, v2 in ipairs(v:GetDescendants()) do
+					if v2:IsA("BasePart") and v2.Name == "Skybox" then
+						TweenService:Create(v2, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+							Color = color
+						}):Play()
+					end
+				end
+			end
+			task.wait(0.12)
+		end
+		styleAllWindows(false, 0.5)
+	end)
+
+	thunderFlash()
+	startAmbience()
+	updateAmbienceForRoom()
+
+	if p1 and p1.camShaker then
+		local shake = t2.IntroShake
+		pcall(function() p1.camShaker:ShakeOnce(shake[1], shake[2], shake[3], shake[4]) end)
+	end
+
+	t3.connections.rooms = CurrentRooms.ChildAdded:Connect(onRoomAdded)
+	startLoops()
+end
+
+function t.attack(p1, p2, p3)
+	if not t3.active or t3.suspended or (p1 and p1.dead) then return end
+	if LocalPlayer.Character ~= nil and LocalPlayer.Character ~= t3.boundCharacter then
+		t.reintro(p1)
+	end
+	if t3.attacking then return end
+
+	t3.attacking = true
+	task.spawn(attackThunderLoop)
+	task.spawn(attackLightValueLoop)
+
+	local Sound = GetGitSound("https://github.com/eoyoustme/Impossible/blob/main/limbo%20ambience%20riser%202.mp3?raw=true", "limbovmvmvm")
+	if Sound then
+		Sound.Parent = workspace
+		Sound.Volume = 1.5
+		Sound.PlaybackSpeed = 1
+		Sound:Play()
+	end
+	local Main = SoundService:FindFirstChild("Main")
+	Sound.SoundGroup = if Main then Main:FindFirstChild("Ambience") or Main else nil
+	Sound.Parent = SoundService
+	Sound:Play()
+	Debris:AddItem(Sound, 30)
+
+	styleAllWindows(true, p3 or 2)
+	thunderFlash()
+
+	if p1 and p1.camShaker then
+		local shake = t2.AttackShake
+		pcall(function() p1.camShaker:ShakeOnce(shake[1], shake[2], p2 or 2, 0.3) end)
+	end
+end
+
+function t.calmReset(p1)
+	if not t3.active then return end
+	t3.attacking = false
+	if t3.suspended or (p1 and p1.dead) then return end
+
+	thunderFlash()
+	styleAllWindows(false, 0.4)
+
+	if p1 and p1.camShaker then
+		local shake = t2.FinalShake
+		pcall(function() p1.camShaker:ShakeOnce(shake[1], shake[2], shake[3], shake[4]) end)
+	end
+end
+
+function t.despawn(p1, p2)
+	if not t3.active then return end
+	local suspendedOrDead = t3.suspended or (if p1 then p1.dead else p1)
+
+	t3.active = false
+	t3.attacking = false
+	t3.suspended = false
+	local dur = p2 or 12
+
+	if suspendedOrDead then
+		if t3.ambience then stopAmbience(true) end
+		restoreAll(dur)
+		for k, v in pairs(t3.connections) do
+			v:Disconnect()
+			t3.connections[k] = nil
+		end
+		if t3.colorCorrection then t3.colorCorrection:Destroy() t3.colorCorrection = nil end
+		if t3.blur then t3.blur:Destroy() t3.blur = nil end
+		if t3.barGui then t3.barGui:Destroy() t3.barGui = nil end
+		t3.barHolder, t3.barFill = nil, nil
+	else
+		local Sound = Instance.new("Sound")
+		Sound.SoundId = t2.EndSound
+		Sound.Volume = 3.25
+		local Main = SoundService:FindFirstChild("Main")
+		Sound.SoundGroup = if Main then Main:FindFirstChild("Ambience") or Main else nil
+		Sound.Parent = SoundService
+		Sound:Play()
+		Debris:AddItem(Sound, 30)
+
+		thunderFlash()
+		restoreAll(dur)
+
+		if t3.barFill then
+			TweenService:Create(t3.barFill, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Size = UDim2.new(1, 0, 0, 0)
+			}):Play()
+		end
+		if t3.barHolder then
+			TweenService:Create(t3.barHolder, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Position = UDim2.new(-0.12, 0, 0.5, 0)
+			}):Play()
+		end
+
+		stopAmbience()
+		updateSickness(0)
+
+		if p1 and p1.camShaker then
+			local shake = t2.DespawnShake
+			pcall(function() p1.camShaker:ShakeOnce(shake[1], shake[2], shake[3], shake[4]) end)
+		end
+
+		task.delay(dur, function()
+			if t3.active then return end
+			for k, v in pairs(t3.connections) do
+				v:Disconnect()
+				t3.connections[k] = nil
+			end
+			if t3.colorCorrection then t3.colorCorrection:Destroy() t3.colorCorrection = nil end
+			if t3.blur then t3.blur:Destroy() t3.blur = nil end
+			if t3.barGui then t3.barGui:Destroy() t3.barGui = nil end
+			t3.barHolder, t3.barFill = nil, nil
+		end)
+	end
+end
+
+getgenv().Limbo = t
+
+local mockState = {
+	dead = false,
+	camShaker = {
+		ShakeOnce = function() end
+	}
+}
+
+t.intro(mockState)
+
+task.spawn(function()
+	task.spawn(function()
+		while true do
+			task.wait(10)
+			t.attack(mockState)
+			task.wait(5)
+			t.calmReset(mockState)
+		end
+	end)
+
+	task.wait(80)
+	t.despawn(mockState, 3)
+end)
