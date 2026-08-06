@@ -1,0 +1,793 @@
+---====== Load spawner ======---
+
+local Spawner = loadstring(game:HttpGet("https://raw.githubusercontent.com/RegularVynixu/DOORS-Entity-Spawner-V2/main/init.luau"))()
+
+---====== Create entity ======---
+
+local entity = Spawner:Create({
+    Entity = {
+        Name = "Deer God",
+        Asset = "https://github.com/reboundplayz/hardcore-reignited/raw/refs/heads/main/deergodreignitedfix.rbxm",
+        HeightOffset = 0
+    },
+    Lights = {
+        Flicker = {
+            Enabled = true,
+            Duration = 100
+        },
+        Shatter = true,
+        Repair = false
+    },
+    Earthquake = {
+        Enabled = false
+    },
+    CameraShake = {
+        Enabled = false,
+        Range = 10,
+        Values = {5, 15, 0.1, 1}
+    },
+    Movement = {
+        Speed = 20,
+        Delay = 0,
+        Reversed = false
+    },
+    Rebounding = {
+        Enabled = false,
+        Type = "Ambush",
+        Min = 1,
+        Max = 1,
+        Delay = 2
+    },
+    Damage = {
+        Enabled = true,
+        IgnoreHiding = true,
+        Range = 40,
+        Amount = 0
+    },
+    Crucifixion = {
+        Enabled = true,
+        Range = 40,
+        Resist = false,
+        Break = true
+    },
+    Death = {
+        Type = "Guiding",
+        Hints = {"You just died to an entity named Deer God...", "Its form is incomprehensible, you shouldn't look at it...", "Hiding won't work either... try running!", "Good luck! I hope you come back again."},
+        Cause = "Deer God"
+    }
+})
+
+---====== Setup Camera Shaker, Sound & Static Variables ======---
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+
+-- Helper for Custom Assets
+local getasset = getcustomasset or getsynasset
+
+-- Helper for Health/Spectator Check
+local function IsPlayerDeadOrSpectating()
+    local char = LocalPlayer.Character
+    if not char then return true end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then
+        return true
+    end
+    return false
+end
+
+-- Camera Shaker Integration
+local CameraShaker = require(game.ReplicatedStorage.CameraShaker)
+local _CurrentCamera = workspace.CurrentCamera
+local CamShakeInstance = CameraShaker.new(Enum.RenderPriority.Camera.Value, function(p143)
+    _CurrentCamera.CFrame = _CurrentCamera.CFrame * p143
+end)
+CamShakeInstance:Start()
+
+-- Variables
+local staticGui = nil
+local staticActive = false
+local constantFlicker = false
+local ambientSound = nil
+local jumpscareSound = nil
+local cutscenePlaying = false
+local isEnraged = false
+local activeEntityModel = nil
+
+-- Custom Subtitle System with Debugging & Safe Font Loading
+local subtitleLoopRunning = false
+local customCaptionLabel = nil
+local fallbackScreenGui = nil
+
+local RANDOM_QUOTES = {
+    "Join us.",
+    "Why do you run, child?",
+    "Your submission is inevitable.",
+    "Your flesh will sustain my children."
+}
+
+-- Safe Font Helper
+local function ApplyCustomFont(textLabel)
+    pcall(function()
+        textLabel.Font = Enum.Font.GrenzeGotisch -- Creepy horror font fallback
+    end)
+    pcall(function()
+        if Font and Font.fromName then
+            textLabel.FontFace = Font.fromName("GrenzeGotisch", Enum.FontWeight.Bold)
+        end
+    end)
+end
+
+local function SetupDeerGodCaption()
+    if customCaptionLabel and customCaptionLabel.Parent then 
+        print("[Deer God UI Debug] Caption UI already initialized.")
+        return true 
+    end
+
+    print("[Deer God UI Debug] Attempting to setup Caption UI...")
+    
+    local mainUI = PlayerGui:FindFirstChild("MainUI")
+    if not mainUI then
+        print("[Deer God UI Debug] MainUI not found immediately, waiting...")
+        mainUI = PlayerGui:WaitForChild("MainUI", 2)
+    end
+
+    local originalCaption = nil
+    if mainUI then
+        print("[Deer God UI Debug] MainUI found!")
+        local mainFrame = mainUI:FindFirstChild("MainFrame")
+        if mainFrame then
+            originalCaption = mainFrame:FindFirstChild("Caption")
+        end
+    else
+        print("[Deer God UI Debug] WARNING: MainUI was not found in PlayerGui.")
+    end
+
+    -- Attempt 1: Clone Native DOORS Caption
+    if originalCaption then
+        print("[Deer God UI Debug] SUCCESS: Original Caption frame found in MainFrame! Cloning now...")
+        local success, err = pcall(function()
+            customCaptionLabel = originalCaption:Clone()
+            customCaptionLabel.Name = "DeerGodCaption"
+            ApplyCustomFont(customCaptionLabel)
+            customCaptionLabel.TextColor3 = Color3.fromRGB(150, 40, 220) -- Purple Accent
+            customCaptionLabel.TextTransparency = 1
+            customCaptionLabel.TextStrokeTransparency = 1
+            customCaptionLabel.Visible = true
+            customCaptionLabel.Parent = originalCaption.Parent
+        end)
+
+        if success and customCaptionLabel then
+            print("[Deer God UI Debug] Cloned native caption successfully!")
+            return true
+        else
+            warn("[Deer God UI Debug] Failed to clone original caption: " .. tostring(err))
+        end
+    else
+        print("[Deer God UI Debug] Could not find original Caption frame in MainUI.")
+    end
+
+    -- Attempt 2: Standalone Custom ScreenGui Fallback
+    print("[Deer God UI Debug] Creating standalone ScreenGui fallback for caption...")
+    local success, err = pcall(function()
+        fallbackScreenGui = Instance.new("ScreenGui")
+        fallbackScreenGui.Name = "DeerGodFallbackGui"
+        fallbackScreenGui.ResetOnSpawn = false
+        fallbackScreenGui.IgnoreGuiInset = true
+        fallbackScreenGui.DisplayOrder = 9999 -- Force on top of everything
+        fallbackScreenGui.Parent = PlayerGui
+
+        local label = Instance.new("TextLabel")
+        label.Name = "DeerGodCaptionFallback"
+        label.Size = UDim2.new(0.8, 0, 0.1, 0)
+        label.Position = UDim2.new(0.5, 0, 0.82, 0)
+        label.AnchorPoint = Vector2.new(0.5, 0.5)
+        label.BackgroundTransparency = 1
+        ApplyCustomFont(label)
+        label.TextColor3 = Color3.fromRGB(150, 40, 220)
+        label.TextScaled = true
+        label.TextWrapped = true
+        label.TextTransparency = 1
+        label.TextStrokeTransparency = 1
+        label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        label.Parent = fallbackScreenGui
+
+        customCaptionLabel = label
+    end)
+
+    if success and customCaptionLabel then
+        print("[Deer God UI Debug] Standalone caption fallback created successfully!")
+        return true
+    else
+        warn("[Deer God UI Debug] Critical failure creating fallback GUI: " .. tostring(err))
+        return false
+    end
+end
+
+local function DisplayDeerGodCaption(textToDisplay)
+    task.spawn(function()
+        print("[Deer God UI Debug] Displaying caption: '" .. tostring(textToDisplay) .. "'")
+        
+        local ready = SetupDeerGodCaption()
+        if not ready or not customCaptionLabel then
+            warn("[Deer God UI Debug] Cannot display caption — customCaptionLabel is nil!")
+            return
+        end
+
+        customCaptionLabel.Text = textToDisplay
+        
+        -- Fade in
+        local tweenIn = TweenService:Create(customCaptionLabel, TweenInfo.new(0.5), {TextTransparency = 0, TextStrokeTransparency = 0.4})
+        tweenIn:Play()
+        tweenIn.Completed:Wait()
+        print("[Deer God UI Debug] Fade-in complete for caption.")
+
+        -- Hold display
+        task.wait(4)
+
+        -- Fade out
+        local tweenOut = TweenService:Create(customCaptionLabel, TweenInfo.new(0.5), {TextTransparency = 1, TextStrokeTransparency = 1})
+        tweenOut:Play()
+        tweenOut.Completed:Wait()
+        print("[Deer God UI Debug] Fade-out complete for caption.")
+    end)
+end
+
+local function StartSubtitleLoop()
+    subtitleLoopRunning = true
+    print("[Deer God UI Debug] Starting Subtitle Loop...")
+
+    task.spawn(function()
+        -- Initial spawn caption
+        DisplayDeerGodCaption("You're being followed...")
+
+        -- Loop for occasional random quotes
+        while subtitleLoopRunning and not cutscenePlaying do
+            task.wait(math.random(10, 18))
+            if not subtitleLoopRunning or cutscenePlaying then break end
+
+            local randomQuote = RANDOM_QUOTES[math.random(1, #RANDOM_QUOTES)]
+            DisplayDeerGodCaption(randomQuote)
+        end
+    end)
+end
+
+local function StopSubtitleLoop()
+    subtitleLoopRunning = false
+    print("[Deer God UI Debug] Stopping Subtitle Loop.")
+    if customCaptionLabel then
+        TweenService:Create(customCaptionLabel, TweenInfo.new(0.3), {TextTransparency = 1, TextStrokeTransparency = 1}):Play()
+    end
+end
+
+-- File Downloader Helper
+local function DownloadFile(fileName, url)
+    if not isfile(fileName) then
+        pcall(function()
+            writefile(fileName, game:HttpGet(url))
+        end)
+    end
+end
+
+local function SetupAmbientSound()
+    local isDead = IsPlayerDeadOrSpectating()
+    
+    -- Dynamic sound selection based on player health state
+    local url = isDead 
+        and "https://github.com/reboundplayz/hardcore-reignited/raw/refs/heads/main/RBX53F7D4AAF47342EE987B022B1C4B91B4.mp3"
+        or "https://github.com/reboundplayz/Doors-Fixed-Modes/raw/refs/heads/main/Your_Consenting_Mind.ogg"
+        
+    local fileName = isDead 
+        and "deergodambient_clean.mp3" 
+        or "deergodambient_fixed.ogg"
+    
+    ambientSound = Instance.new("Sound")
+    ambientSound.Name = "DeerGodAmbientMusic"
+    ambientSound.Volume = 2.5
+    ambientSound.Looped = true
+    ambientSound.Parent = game:GetService("SoundService")
+
+    pcall(function()
+        DownloadFile(fileName, url)
+        if getasset then
+            ambientSound.SoundId = getasset(fileName)
+        end
+    end)
+end
+
+local function PlayAmbientSound()
+    if not ambientSound then SetupAmbientSound() end
+    if ambientSound and ambientSound.SoundId ~= "" then
+        ambientSound:Play()
+    end
+end
+
+local function StopAmbientSound()
+    if ambientSound then
+        ambientSound:Stop()
+        ambientSound:Destroy()
+        ambientSound = nil
+    end
+end
+
+local function CreateStaticEffect()
+    -- Check if player is dead or spectating before creating static UI
+    if IsPlayerDeadOrSpectating() then 
+        return 
+    end
+
+    staticGui = Instance.new("ScreenGui")
+    staticGui.Name = "DeerGodStaticGui"
+    staticGui.ResetOnSpawn = false
+    staticGui.IgnoreGuiInset = true
+    staticGui.Parent = PlayerGui
+
+    local staticImage = Instance.new("ImageLabel")
+    staticImage.Name = "StaticImage"
+    staticImage.Image = "rbxassetid://8806708292"
+    staticImage.ImageTransparency = 0.92 
+    staticImage.BackgroundTransparency = 1
+    staticImage.Size = UDim2.new(1.3, 0, 1.3, 0) 
+    staticImage.AnchorPoint = Vector2.new(0.5, 0.5)
+    staticImage.Position = UDim2.new(0.5, 0, 0.5, 0)
+    staticImage.Parent = staticGui
+
+    staticActive = true
+
+    task.spawn(function()
+        local rand = Random.new()
+        while staticActive and staticImage and staticImage.Parent do
+            local xOffset = rand:NextNumber(-55, 55)
+            local yOffset = rand:NextNumber(-55, 55)
+            staticImage.Position = UDim2.new(0.5, xOffset, 0.5, yOffset)
+            staticImage.ImageTransparency = rand:NextNumber(0.70, 0.97)
+            task.wait(0.01)
+        end
+    end)
+end
+
+local function RemoveStaticEffect()
+    staticActive = false
+    if staticGui then
+        staticGui:Destroy()
+        staticGui = nil
+    end
+    CamShakeInstance:Stop()
+end
+
+local function StartConstantFlicker()
+    constantFlicker = true
+    task.spawn(function()
+        local ModuleScripts = game:GetService("ReplicatedStorage"):WaitForChild("ModuleScripts", 5)
+        local MainGame = ModuleScripts and ModuleScripts:FindFirstChild("MainGame")
+        
+        while constantFlicker do
+            if MainGame then
+                pcall(function()
+                    require(MainGame).flickerLights(1, 1)
+                end)
+            else
+                pcall(function()
+                    for _, v in ipairs(workspace:GetDescendants()) do
+                        if v:IsA("Light") and v.Name == "Light" then
+                            v.Enabled = not v.Enabled
+                        end
+                    end
+                end)
+            end
+            task.wait(math.random(5, 25) / 100)
+        end
+    end)
+end
+
+local function StopConstantFlicker()
+    constantFlicker = false
+end
+
+-- Custom Cutscene System
+local function PlayCustomCutscene()
+    if cutscenePlaying then return end
+    cutscenePlaying = true
+
+    StopSubtitleLoop()
+    RemoveStaticEffect()
+    StopConstantFlicker() 
+    StopAmbientSound()
+
+    task.spawn(function()
+        local Workspace = game:GetService("Workspace")
+        local Lighting = game:GetService("Lighting")
+        local RunService = game:GetService("RunService")
+        local TweenService = game:GetService("TweenService")
+        local Players = game:GetService("Players")
+
+        local camera = Workspace.CurrentCamera
+        local localPlayer = Players.LocalPlayer
+        
+        local function getgithubmodeL(url)
+            if not (writefile and getcustomasset and request) then return nil end
+            local fileName = string.match(url, "([^/]+)$") or "temp_model.rbxm"
+            local response = request({Url = url, Method = "GET"})
+            if not response or response.StatusCode ~= 200 then return nil end
+            writefile(fileName, response.Body)
+            local assetId = (getcustomasset or getsynasset)(fileName)
+            local success, result = pcall(function() return game:GetObjects(assetId)[1] end)
+            return success and result or nil
+        end
+
+        local function GetGitSound(GithubSnd, SoundName)
+            local url = GithubSnd
+            if not isfile(SoundName .. ".oga") then
+                writefile(SoundName .. ".oga", game:HttpGet(url))
+            end
+            local sound = Instance.new("Sound")
+            sound.SoundId = (getcustomasset or getsynasset)(SoundName .. ".oga")
+            return sound
+        end
+        local Jumpscare = GetGitSound("https://github.com/eoyoustme/Hardcore/blob/main/DL_AMB.oga?raw=true","DL")
+        Jumpscare.Parent = workspace
+        Jumpscare.Volume = 3
+        Jumpscare.PlaybackSpeed = 1
+        Jumpscare:Play()
+
+        local modelUrl = "https://github.com/reboundplayz/hardcore-reignited/raw/refs/heads/main/deerjsfix.rbxm"
+        local modelFile = "Deerjsfix.rbxm"
+        local CUTSCENE_DURATION = 9.6
+
+        for _, oldObj in ipairs(Workspace:GetChildren()) do
+            if oldObj.Name == "ashj_cutscene_root" or oldObj.Name == "Model" or oldObj.Name == "DeathForest" then
+                if oldObj:FindFirstChild("Deer God", true) or oldObj:FindFirstChild("Back", true) then
+                    oldObj:Destroy()
+                end
+            end
+        end
+
+        local spawnedModel = nil
+        pcall(function()
+            spawnedModel = getgithubmodeL(modelUrl)
+        end)
+
+        if not spawnedModel then 
+            warn("Failed to load custom cutscene model asset.")
+            return 
+        end
+
+        spawnedModel.Name = "DeathForest"
+
+        local spawnLocation = CFrame.new(0, -1000, 0)
+        spawnedModel.Parent = Workspace
+        if spawnedModel:IsA("Model") then
+            spawnedModel:PivotTo(spawnLocation)
+        elseif spawnedModel:IsA("BasePart") then
+            spawnedModel.CFrame = spawnLocation
+        end
+
+        local backPart = spawnedModel:FindFirstChild("Camera", true)
+        local targetPart = spawnedModel:FindFirstChild("Deer God", true)
+
+        local baseStartPos = (backPart and backPart:IsA("BasePart") and backPart.Position) or spawnedModel:GetPivot().Position
+        local baseTargetPos = (targetPart and targetPart:IsA("BasePart") and targetPart.Position) or spawnedModel:GetPivot().Position
+
+        local startPos = baseStartPos - Vector3.new(1, -1, 0)
+        local targetPos = baseTargetPos - Vector3.new(2, -2, 0)
+
+        local progress = Instance.new("NumberValue")
+        progress.Value = 0
+
+        local cutsceneLight = Instance.new("PointLight")
+        cutsceneLight.Name = "CutsceneIllumination"
+        cutsceneLight.Color = Color3.fromRGB(255, 10, 10)
+        cutsceneLight.Range = 150 
+        cutsceneLight.Brightness = 35 
+        cutsceneLight.Shadows = false
+        cutsceneLight.Parent = camera 
+
+        local redTint = Instance.new("ColorCorrectionEffect")
+        redTint.Name = "CutsceneRedTint"
+        redTint.TintColor = Color3.fromRGB(255, 30, 30)
+        redTint.Brightness = 0.25
+        redTint.Contrast = 0.2
+        redTint.Parent = Lighting
+
+        local atmosphereGlow = Instance.new("Atmosphere")
+        atmosphereGlow.Name = "CutsceneRedGlow"
+        atmosphereGlow.Color = Color3.fromRGB(255, 0, 0)
+        atmosphereGlow.Decay = Color3.fromRGB(180, 0, 0)
+        atmosphereGlow.Glare = 100 
+        atmosphereGlow.Density = 0.86 
+        atmosphereGlow.Parent = Lighting
+
+        local PlayerGui = game.Players.LocalPlayer.PlayerGui
+
+        local DeerGod = Instance.new("ScreenGui")
+        DeerGod.Name = "DeerGodFace"
+        DeerGod.IgnoreGuiInset = true
+        DeerGod.ClipToDeviceSafeArea = false
+        DeerGod.DisplayOrder = 999
+        DeerGod.Parent = PlayerGui
+
+        local flashBg = Instance.new("Frame")
+        flashBg.Size = UDim2.new(1, 0, 1, 0)
+        flashBg.BackgroundColor3 = Color3.new(0, 0, 0)
+        flashBg.BackgroundTransparency = 1
+        flashBg.BorderSizePixel = 0
+        flashBg.ZIndex = 1
+        flashBg.Parent = DeerGod
+
+        local flashter = Instance.new("ImageLabel")
+        flashter.AnchorPoint = Vector2.new(0.5, 0.5)
+        flashter.Position = UDim2.new(0.5, 0, 0.5, 0)
+        flashter.Size = UDim2.new(1.3, 0, 1.3, 0)
+        flashter.BackgroundTransparency = 1
+        flashter.Image = "rbxassetid://129191734706359"
+        flashter.ImageTransparency = 1
+        flashter.ScaleType = Enum.ScaleType.Fit
+        flashter.ZIndex = 2
+        flashter.Parent = DeerGod
+
+        local function flashImage(duration, times)
+            local delayTime = duration / (times * 2)
+            for i = 1, times do
+                flashter.ImageTransparency = 0
+                flashBg.BackgroundTransparency = 0
+                flashBg.BackgroundColor3 = Color3.new(1, 1, 1)
+                task.wait(delayTime)
+
+                flashBg.BackgroundColor3 = Color3.new(0, 0, 0)
+                task.wait(delayTime)
+            end
+            flashter.ImageTransparency = 1
+            flashBg.BackgroundTransparency = 1
+        end
+
+        task.spawn(function()
+            task.wait(2)
+            flashImage(0.4, 6)
+            task.wait(4)
+            flashImage(0.4, 6)
+            task.wait(0.5)
+            flashImage(0.4, 6)
+            task.wait(0.5)
+            flashImage(0.5, 8)
+            task.wait(0.5)
+        end)
+
+        local cameraConnection
+        cameraConnection = RunService.RenderStepped:Connect(function()
+            camera.CameraType = Enum.CameraType.Scriptable
+
+            local currentPos = startPos:Lerp(targetPos, progress.Value)
+
+            camera.CFrame = CFrame.lookAt(currentPos, targetPos)
+
+            for _, obj in ipairs(Workspace:GetChildren()) do
+                if obj.Name == "wmetjkn_cutscene_root" or obj.Name == "Model" or obj.Name == "DeathForest" or obj:FindFirstChild("Deer God", true) then
+                    for _, part in ipairs(obj:GetDescendants()) do
+                        if part:IsA("BasePart") and not part.Anchored then
+                            part.Anchored = true
+                            part.CanCollide = false
+                        end
+                    end
+                end
+            end
+        end)
+
+        local tweenInfo = TweenInfo.new(22, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut)
+        local cutsceneTween = TweenService:Create(progress, tweenInfo, {Value = 1})
+
+        cutsceneTween:Play()
+        task.wait(9.6)
+
+        if cameraConnection then
+            cameraConnection:Disconnect()
+        end
+        Jumpscare:Destroy()
+
+        if game.Players.LocalPlayer.Character and game.Players.LocalPlayer.Character:FindFirstChild("Humanoid") then
+            game.Players.LocalPlayer.Character.Humanoid.Health = 0
+        end
+        
+        local sound = Instance.new("Sound")
+        sound.SoundId = "rbxassetid://4988621968"
+        sound.Volume = 10
+        sound.PlaybackSpeed = 0.6
+        sound.Parent = workspace
+        sound:Play()
+
+        camera.CameraType = Enum.CameraType.Custom
+
+        if cutsceneLight then cutsceneLight:Destroy() end
+        if redTint then redTint:Destroy() end
+        if atmosphereGlow then atmosphereGlow:Destroy() end
+        if spawnedModel then spawnedModel:Destroy() end
+        if progress then progress:Destroy() end
+        if DeerGod then DeerGod:Destroy() end
+
+        print("Cutscene finished and successfully cleaned up!")
+    end)
+end
+
+-- Helper function for smooth physical chase loop
+local function StartChase()
+    if isEnraged or cutscenePlaying or not activeEntityModel or IsPlayerDeadOrSpectating() then return end
+    isEnraged = true
+    
+    for _, part in ipairs(activeEntityModel:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.Anchored = true
+            part.CanCollide = false
+        end
+    end
+
+    local chaseConnection
+    chaseConnection = RunService.RenderStepped:Connect(function(deltaTime)
+        local currentChar = LocalPlayer.Character
+        if activeEntityModel and activeEntityModel.Parent and currentChar and currentChar:FindFirstChild("HumanoidRootPart") and not cutscenePlaying and not IsPlayerDeadOrSpectating() then
+            local pRoot = currentChar.HumanoidRootPart
+            local currentPivot = activeEntityModel:GetPivot()
+            
+            local targetLook = Vector3.new(pRoot.Position.X, currentPivot.Position.Y, pRoot.Position.Z)
+            local direction = (pRoot.Position - currentPivot.Position).Unit
+            
+            local moveSpeed = 40 
+            local nextPosition = currentPivot.Position + (direction * (moveSpeed * deltaTime))
+            
+            activeEntityModel:PivotTo(CFrame.new(nextPosition, targetLook))
+            
+            local distance = (pRoot.Position - currentPivot.Position).Magnitude
+            if distance <= 6.5 then
+                chaseConnection:Disconnect()
+                task.spawn(PlayCustomCutscene)
+            end
+        else
+            chaseConnection:Disconnect()
+        end
+    end)
+end
+
+---====== Debug entity ======---
+
+entity:SetCallback("OnSpawned", function()
+    print("Entity has spawned")
+    CreateStaticEffect()
+    StartConstantFlicker()
+    PlayAmbientSound()
+    StartSubtitleLoop()
+    CamShakeInstance:ShakeSustain(CameraShaker.Presets.Earthquake)
+    isEnraged = false
+    activeEntityModel = nil
+
+    task.spawn(function()
+        while not activeEntityModel do
+            if entity and entity.Debug and entity.Debug.Model then
+                activeEntityModel = entity.Debug.Model
+            end
+            if not activeEntityModel then
+                for _, child in ipairs(workspace:GetChildren()) do
+                    if child:IsA("Model") and (child.Name == "Deer God" or child:FindFirstChild("DeerLord 2", true)) then
+                        activeEntityModel = child
+                        break
+                    end
+                end
+            end
+            if not activeEntityModel then
+                local spawnerFolder = workspace:FindFirstChild("Spawner_Entities")
+                if spawnerFolder then
+                    for _, child in ipairs(spawnerFolder:GetChildren()) do
+                        if child:IsA("Model") and (child.Name == "Deer God" or child:FindFirstChild("DeerLord 2", true)) then
+                            activeEntityModel = child
+                            break
+                        end
+                    end
+                end
+            end
+            task.wait(0.05)
+        end
+        print("Model reference captured smoothly!")
+    end)
+
+    -- Look Detection Loop
+    task.spawn(function()
+        while task.wait(0.05) do
+            if cutscenePlaying or isEnraged or IsPlayerDeadOrSpectating() then break end
+            
+            local character = LocalPlayer.Character
+            if activeEntityModel and character and character:FindFirstChild("HumanoidRootPart") then
+                local entityPart = activeEntityModel:FindFirstChild("HumanoidRootPart") or activeEntityModel:FindFirstChildWhichIsA("BasePart", true)
+                
+                if entityPart then
+                    local camera = workspace.CurrentCamera
+                    local _, onScreen = camera:WorldToViewportPoint(entityPart.Position)
+                    
+                    if onScreen then
+                        local camLook = camera.CFrame.LookVector
+                        local toEntity = (entityPart.Position - camera.CFrame.Position).Unit
+                        local dotProduct = camLook:Dot(toEntity)
+                        
+                        if dotProduct > 0.60 then 
+                            local raycastParams = RaycastParams.new()
+                            raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+                            raycastParams.FilterDescendantsInstances = {character, activeEntityModel, camera}
+                            raycastParams.IgnoreWater = true
+                            
+                            local rayOrigin = camera.CFrame.Position
+                            local rayDirection = entityPart.Position - rayOrigin
+                            local raycastResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+                            
+                            if not raycastResult then
+                                print("Player looked directly at Deer God with clear Line of Sight!")
+                                StartChase()
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end)
+
+entity:SetCallback("OnStartMoving", function()
+    print("Entity has started moving")
+end)
+
+entity:SetCallback("OnEnterRoom", function(room: Model, firstTime: boolean)
+    if firstTime == true then
+        print("Entity has entered room: ".. room.Name.. " for the first time")
+    else
+        print("Entity has entered room: ".. room.Name.. " again")
+    end
+end)
+
+entity:SetCallback("OnLookAt", function(lineOfSight: boolean)
+    if lineOfSight == true and not isEnraged and not cutscenePlaying and activeEntityModel and not IsPlayerDeadOrSpectating() then
+        print("Player looked at entity via framework fallback!")
+        StartChase()
+    end
+end)
+
+entity:SetCallback("OnRebounding", function(startOfRebound: boolean)
+    if startOfRebound == true then
+        print("Entity has started rebounding")
+    else
+        print("Entity has finished rebounding")
+    end
+end)
+
+entity:SetCallback("OnDespawning", function()
+    print("Entity is despawning")
+end)
+
+entity:SetCallback("OnDespawned", function()
+    print("Entity has despawned")
+    if activeEntityModel then
+        pcall(function() activeEntityModel:Destroy() end)
+        activeEntityModel = nil
+    end
+    StopSubtitleLoop()
+    RemoveStaticEffect() 
+    StopConstantFlicker() 
+    StopAmbientSound()
+    if customCaptionLabel then
+        customCaptionLabel:Destroy()
+        customCaptionLabel = nil
+    end
+    if fallbackScreenGui then
+        fallbackScreenGui:Destroy()
+        fallbackScreenGui = nil
+    end
+end)
+
+entity:SetCallback("OnDamagePlayer", function(newHealth: number)
+    if cutscenePlaying or IsPlayerDeadOrSpectating() then return end
+    print("Entity touched player - Intercepting and running cutscene")
+    task.spawn(PlayCustomCutscene)
+end)
+
+---====== Run entity ======---
+
+entity:Run(true)
