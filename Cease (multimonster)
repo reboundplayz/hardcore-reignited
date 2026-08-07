@@ -1,0 +1,335 @@
+local Tweenservice = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
+local Remotes = ReplicatedStorage:WaitForChild("RemotesFolder")
+
+local rng = Random.new()
+local raycastLoop = nil 
+local roomChangedConn = nil
+local proximityCheckConn = nil
+
+local doorOpenedDuringSpawn = false
+local repentTriggered = false
+
+--====== Asset Loader Helper ======---
+
+local function getCustomSoundAsset(fileName, url)
+    if not isfile(fileName) then
+        local success, result = pcall(function()
+            return game:HttpGet(url)
+        end)
+        if success then
+            writefile(fileName, result)
+        else
+            warn("Failed to download custom sound from URL: " .. tostring(url))
+            return nil
+        end
+    end
+    return getcustomasset(fileName)
+end
+
+-- Pre-download/load custom Repent sound asset
+local customRepentAsset = getCustomSoundAsset("CeaseRepentSound.mp3", "https://github.com/reboundplayz/hardcore-reignited/raw/refs/heads/main/0802.MP3")
+
+local function light(tim, color0, color1)
+    local info = TweenInfo.new(tim, Enum.EasingStyle.Linear)
+    local currentRooms = workspace:FindFirstChild("CurrentRooms")
+    if not currentRooms then return end
+
+    for _, instance in ipairs(currentRooms:GetDescendants()) do
+        if instance:IsA("Light") or instance:IsA("SurfaceLight") or instance:IsA("SpotLight") then
+            Tweenservice:Create(instance, info, {Color = color1}):Play()
+        elseif instance:IsA("MeshPart") and instance.Material == Enum.Material.Neon and instance.Name ~= "Skybox" then
+            Tweenservice:Create(instance, info, {Color = color0}):Play()
+        end
+    end
+end
+
+--====== Load spawner ======---
+
+local Spawner = loadstring(game:HttpGet("https://raw.githubusercontent.com/RegularVynixu/DOORS-Entity-Spawner-V2/main/init.luau"))()
+
+---====== Create entity ======---
+
+local entity = Spawner:Create({
+    Entity = {
+        Name = "CeaseMoving",
+        Asset = "https://github.com/reboundplayz/hardcore-reignited/raw/refs/heads/main/multimonstercease.rbxm",
+        HeightOffset = 0
+    },
+    Lights = {
+        Flicker = {
+            Enabled = false,
+            Duration = 1
+        },
+        Shatter = false,
+        Repair = false
+    },
+    Earthquake = {
+        Enabled = false
+    },
+    CameraShake = {
+        Enabled = true,
+        Range = 100,
+        Values = {1.5, 20, 0.1, 1}
+    },
+    Movement = {
+        Speed = 60,
+        Delay = 0,
+        Reversed = false
+    },
+    Rebounding = {
+        Enabled = false,
+        Type = "Ambush",
+        Min = 1,
+        Max = 1,
+        Delay = 2
+    },
+    Damage = {
+        Enabled = false,
+        IgnoreHiding = false,
+        Range = 40,
+        Amount = 125
+    },
+    Crucifixion = {
+        Enabled = true,
+        Range = 40,
+        Resist = false,
+        Break = true
+    },
+    Death = {
+        Type = "Guiding",
+        Hints = {"Death", "Hints", "Go", "Here"},
+        Cause = ""
+    }
+})
+
+---====== Helpers for Repent Event ======---
+
+local function triggerRepentEvent(ceaseModel)
+    if repentTriggered or not doorOpenedDuringSpawn then return end
+    repentTriggered = true
+
+    local entityRoot = ceaseModel:FindFirstChild("HumanoidRootPart") or ceaseModel:FindFirstChildWhichIsA("BasePart")
+    
+    -- Force hard freeze loop on CFrame so CFrame interpolation can't move him
+    local freezePos = ceaseModel:GetPivot()
+    local freezeConn
+    freezeConn = RunService.Heartbeat:Connect(function()
+        if ceaseModel and ceaseModel.Parent then
+            ceaseModel:PivotTo(freezePos)
+            if entityRoot then
+                entityRoot.AssemblyLinearVelocity = Vector3.zero
+                entityRoot.AssemblyAngularVelocity = Vector3.zero
+            end
+        end
+    end)
+
+    -- Play Custom GitHub Repent Sound
+    if customRepentAsset then
+        local sound = Instance.new("Sound")
+        sound.Name = "CustomRepentSound"
+        sound.SoundId = customRepentAsset
+        sound.Volume = 5
+        sound.PlaybackSpeed = 0.8
+        sound.RollOffMaxDistance = math.huge
+        sound.RollOffMinDistance = math.huge
+        sound.Parent = SoundService
+        sound:Play()
+
+        task.delay(10, function()
+            if sound then
+                sound:Destroy()
+            end
+        end)
+    end
+
+    -- Store and expand PointLights smoothly
+    local lightData = {}
+    for _, desc in ipairs(ceaseModel:GetDescendants()) do
+        if desc:IsA("PointLight") then
+            table.insert(lightData, {
+                Light = desc,
+                OriginalRange = desc.Range,
+                OriginalBrightness = desc.Brightness
+            })
+            Tweenservice:Create(desc, TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                Range = desc.Range * 3,
+                Brightness = desc.Brightness * 2
+            }):Play()
+        end
+    end
+
+    -- Hold frozen state for 5 seconds
+    task.wait(5)
+
+    -- Decrease PointLights back to normal smoothly
+    for _, data in ipairs(lightData) do
+        if data.Light and data.Light.Parent then
+            Tweenservice:Create(data.Light, TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+                Range = data.OriginalRange,
+                Brightness = data.OriginalBrightness
+            }):Play()
+        end
+    end
+
+    task.wait(1.5)
+
+    -- Release freeze connection
+    if freezeConn then
+        freezeConn:Disconnect()
+        freezeConn = nil
+    end
+end
+
+---====== Debug entity ======---
+
+entity:SetCallback("OnSpawned", function()
+    print("Entity has spawned")
+
+    light(2, Color3.fromRGB(127, 249, 255), Color3.fromRGB(0, 45, 185))
+
+    repeat task.wait() until entity.Model or workspace:FindFirstChild("CeaseMoving")
+    local ceaseModel = entity.Model or workspace:FindFirstChild("CeaseMoving")
+
+    -- Track Room Changes (Store initial room to avoid false trigger on spawn)
+    local latestRoomVal = ReplicatedStorage:WaitForChild("GameData"):WaitForChild("LatestRoom")
+    local initialRoom = latestRoomVal.Value
+
+    roomChangedConn = latestRoomVal.Changed:Connect(function(newVal)
+        -- Only flag if a genuinely NEW room was opened after spawn
+        if newVal ~= initialRoom then
+            doorOpenedDuringSpawn = true
+            entity.Movement.Speed = entity.Movement.Speed * 1.1
+            print("Room opened! Cease registered door open event.")
+        end
+    end)
+
+    -- Check Proximity ONLY when a door was actually opened
+    proximityCheckConn = RunService.Heartbeat:Connect(function()
+        if doorOpenedDuringSpawn and not repentTriggered and ceaseModel and ceaseModel.Parent then
+            local ceasePos = ceaseModel:GetPivot().Position
+            for _, player in ipairs(Players:GetPlayers()) do
+                local chr = player.Character
+                if chr and chr:FindFirstChild("HumanoidRootPart") then
+                    local dist = (chr.HumanoidRootPart.Position - ceasePos).Magnitude
+                    if dist <= 35 then
+                        task.spawn(function()
+                            triggerRepentEvent(ceaseModel)
+                        end)
+                        break
+                    end
+                end
+            end
+        end
+    end)
+
+    local hitboxRange = 40
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    params.FilterDescendantsInstances = {ceaseModel}
+
+    -- Movement Check Loop
+    raycastLoop = RunService.Heartbeat:Connect(function()
+        if not ceaseModel or not ceaseModel.Parent then return end
+        local origin = ceaseModel:GetPivot().Position
+
+        for _, player in ipairs(Players:GetPlayers()) do
+            local chr = player.Character
+            if chr and chr:FindFirstChild("HumanoidRootPart") and chr:FindFirstChild("Humanoid") then
+                local hrp = chr.HumanoidRootPart
+                local humanoid = chr.Humanoid
+
+                local direction = (hrp.Position - origin).Unit
+                local rayResult = workspace:Raycast(origin, direction * hitboxRange, params)
+
+                if rayResult and rayResult.Instance and rayResult.Instance:IsDescendantOf(chr) then
+                    local isMovingByInput = humanoid.MoveDirection.Magnitude > 0.1
+                    local isMovingByVelocity = hrp.AssemblyLinearVelocity.Magnitude > 2
+
+                    if isMovingByInput and isMovingByVelocity and humanoid.Health > 0 then
+                        humanoid.Health = 0
+
+                        local sound = Instance.new("Sound")
+                        sound.SoundId = "rbxassetid://4988621968"
+                        sound.Volume = 10
+                        sound.PlaybackSpeed = 0.7
+                        sound.Parent = workspace
+                        sound:Play()
+                        game:GetService("Debris"):AddItem(sound, 5)
+
+                        print(player.Name .. " died to Cease for moving!")
+
+                        ReplicatedStorage.GameStats["Player_".. player.Name].Total.DeathCause.Value = "Cease"
+                        firesignal(Remotes.DeathHint.OnClientEvent, "You died to who you call Cease"," Cease is capable of hearing you for miles so I recommend you to run away", "Blue")
+                    end
+                end
+            end
+        end
+    end)
+end)
+
+entity:SetCallback("OnStartMoving", function()
+    print("Entity has started moving")
+end)
+
+entity:SetCallback("OnEnterRoom", function(room: Model, firstTime: boolean)
+    -- Disabled random room-entrance freezing
+end)
+
+entity:SetCallback("OnLookAt", function(lineOfSight: boolean)
+    if lineOfSight == true then
+        print("Player is looking at entity")
+    end
+end)
+
+entity:SetCallback("OnRebounding", function(startOfRebound: boolean)
+    if startOfRebound == true then
+        print("Entity has started rebounding")
+    else
+        print("Entity has finished rebounding")
+    end
+end)
+
+entity:SetCallback("OnDespawning", function()
+    print("Entity is despawning")
+    if raycastLoop then
+        raycastLoop:Disconnect()
+        raycastLoop = nil
+    end
+    if roomChangedConn then
+        roomChangedConn:Disconnect()
+        roomChangedConn = nil
+    end
+    if proximityCheckConn then
+        proximityCheckConn:Disconnect()
+        proximityCheckConn = nil
+    end
+
+    local achievementGiver = loadstring(game:HttpGet("https://raw.githubusercontent.com/RegularVynixu/Utilities/main/Doors/Custom%20Achievements/Source.lua"))()
+
+    achievementGiver({
+        Title = "I don't want a Noise",
+        Desc = "CeaseStopping",
+        Reason = "Survive Cease",
+        Image = "rbxassetid://104367200417966"
+    })
+end)
+
+entity:SetCallback("OnDespawned", function()
+    print("Entity has despawned")
+end)
+
+entity:SetCallback("OnDamagePlayer", function(newHealth: number)
+    if newHealth <= 0 then
+        print("Entity has killed the player")
+    else
+        print("Entity has damaged the player")
+    end
+end)
+
+---====== Run entity ======---
+
+entity:Run(true)
